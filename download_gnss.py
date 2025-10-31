@@ -134,9 +134,11 @@ async def download_rinex_coro(
     doy = date.timetuple().tm_yday
     url = f"{server}/{year}/{doy:03d}/"
     for station in stations:
-        fname = f"{station}00ESP_R_{year}{doy:03d}0000_01D_30S_MO.crx.gz"
+        fname = f"{station}_R_{year}{doy:03d}0000_01D_30S_MO.crx.gz"
         if check_url(f"{url}{fname}"):
             urls.append(f"{url}{fname}")
+        else:
+            print(f"{url}{fname} not existing")
 
     coros = []
     for url in urls:

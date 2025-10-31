@@ -20,8 +20,6 @@ C12 = 100 / (40.3 * (1.0 / FREQL1**2 - 1.0 / FREQL2**2))
 # 100 because conversion to Hz and to TECU (1e18/1e16)
 
 
-
-
 class DCBdata(NamedTuple):
     """Object containing differential code biases"""
 
@@ -119,12 +117,12 @@ def _read_dcb_data(file_buffer):
             stddev = float(data["STD_DEV"])
             prn = data["PRN"]
             if station:
-                station_code_combination.append(f"{station}_{cod1}+{cod2}")
+                station_code_combination.append(f"{station}_{cod1}_{cod2}")
                 dcb.append(
                     np.array((bias, stddev)) * speed_light.value * to_seconds
                 )  # bias in meter
             else:
-                station_code_combination.append(f"{prn}_{cod1}+{cod2}")
+                station_code_combination.append(f"{prn}_{cod1}_{cod2}")
                 dcb.append(
                     np.array((bias, stddev)) * speed_light.value * to_seconds
                 )  # bias in meter
@@ -141,7 +139,11 @@ def get_gnss_data(gnss_file: Path, times: Time, dcb: dict[Any], station: str):
         labels = [
             i for i in sorted(gnss.data_vars.keys()) if i[1] == "1" or i[1] == "2"
         ]
-        dcb_labels = [i[1:] for i in dcb.keys() if i[0] == station]
+        dcb_labels = [
+            i.split("_")[1:]
+            for i in dcb.station_code_combination
+            if i.split("_")[0] == station[:4]
+        ]
         c_tracking = [
             (i, j)
             for i, j in dcb_labels
@@ -184,7 +186,7 @@ def get_gnss_data(gnss_file: Path, times: Time, dcb: dict[Any], station: str):
             tlim=[times[0].isot, (times[-1] + 1 * u.min).isot],
         )
         return GNSSData(
-            gnns=gnss,
+            gnss=gnss,
             c1_str=c_tracking[0],
             c2_str=c_tracking[1],
             l1_str=f"L1{c_tracking[0][-1]}",
@@ -194,20 +196,19 @@ def get_gnss_data(gnss_file: Path, times: Time, dcb: dict[Any], station: str):
             station=station,
         )
     except:
+        print(f"failed for station {station}")
         return dummy_gnss_data(station=station)
 
 
-def process_all_rinex_parallel(
-    rinex_files, times: Time, dcb: dict[Any], max_workers=8
-):
+def process_all_rinex_parallel(rinex_files, times: Time, dcb: dict[Any], max_workers=8):
     """Run get_gnss_data in parallel and gather results."""
-
-    def _get_gnss_data(rinex_file: Path):
-        return get_gnss_data(rinex_file, times=times, dcb=dcb, station=rinex_file.stem[:4])
 
     results = []
     with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(_get_gnss_data, rf): rf for rf in rinex_files}
+        futures = {
+            executor.submit(get_gnss_data, rf, times, dcb, rf.stem[:9]): rf
+            for rf in rinex_files
+        }
         for fut in concurrent.futures.as_completed(futures):
             results.append(fut.result())
     return results
@@ -229,9 +230,11 @@ def get_tec_gnss(
     l2_str = gnssdata.l2_str
     times = Time(gnss[c1_str].time) + clock_correction
     if gnssdata.has_dcb:
-        dcb_stat = dcb[f"{station}_{c1_str}_{c2_str}"][
+        dcb_stat = dcb[dcbkeys.index(f"{station[:4]}_{c1_str}_{c2_str}")][
             0
         ]  # first is value second is stddev
+    else:
+        dcb_stat=0
     stec_list = []
 
     for prn in gnss[c1_str].sv.values:
@@ -247,9 +250,9 @@ def get_tec_gnss(
                 gnss[l1_str].sel(sv=prn).values * WL1
                 - gnss[l2_str].sel(sv=prn).values * WL2
             )
-            time_of_transmission = (
+            times_of_transmission = (
                 times
-                - (gnss[c2_str].sel(sv=prn).values - (dcb_stat - dcb_sat)) / speed_light
+                - (gnss[c2_str].sel(sv=prn).values - (dcb_stat - dcb_sat)) * u.m / speed_light
             )
 
             phase_bias = np.nanmean(tec_c1c2 - tec_l1l2)  # TODO: detect cycle slips
@@ -261,39 +264,37 @@ def get_tec_gnss(
                     station=station,
                     prn=prn,
                     times=times,
-                    time_of_transmission=time_of_transmission,
+                    times_of_transmission=times_of_transmission,
                 )
             )
     return stec_list
 
 
-def parse_clk_data(clkfile:Path) -> dict[Any]:
+def parse_clk_data(clkfile: Path) -> dict[Any]:
 
     satellites = {}
     stations = {}
     with open(clkfile) as myf:
         for line in myf:
-            if line.startswith('AS'):  # Satellite record
+            if line.startswith("AS"):  # Satellite record
                 parts = line.split()
                 sat_name = parts[1]
-                date_str = ' '.join(parts[2:8])
+                date_str = " ".join(parts[2:8])
                 clk_bias = float(parts[9])  # clock bias (seconds)
                 epoch = datetime.strptime(date_str, "%Y %m %d %H %M %S.%f")
 
-                satellites.setdefault(sat_name, []).append({
-                    "epoch": epoch,
-                    "bias": clk_bias
-                })
+                satellites.setdefault(sat_name, []).append(
+                    {"epoch": epoch, "bias": clk_bias}
+                )
 
-            elif line.startswith('AR'):  # Station record
+            elif line.startswith("AR"):  # Station record
                 parts = line.split()
                 sta_name = parts[1]
-                date_str = ' '.join(parts[2:8])
+                date_str = " ".join(parts[2:8])
                 clk_bias = float(parts[9])
                 epoch = datetime.strptime(date_str, "%Y %m %d %H %M %S.%f")
 
-                stations.setdefault(sta_name, []).append({
-                    "epoch": epoch,
-                    "bias": clk_bias
-                })
+                stations.setdefault(sta_name, []).append(
+                    {"epoch": epoch, "bias": clk_bias}
+                )
     return satellites, stations

@@ -18,15 +18,13 @@ from gnss_geometry import get_sat_pos, get_stat_sat_ipp
 MIN_DISTANCE_SELECT = 600 * u.km
 HEIGHT_ARRAY = np.arange(50, 2000, 10) * u.km
 
-euref_station_file = "data/data_euref_pos.ssc"
+euref_station_file = "data/data_euref_pos.ssc2"
 # TODO: get more gnss stations/databases
 gnss_pos_dict = {}
 with open(euref_station_file) as myf:
     for line in myf:
         pos = [float(i) for i in line.strip().split()[1:]]
-        gnss_pos_dict[line[:4]] = EarthLocation.from_geocentric(
-            *pos, unit=u.m, frame=GCRS
-        )
+        gnss_pos_dict[line[:9]] = EarthLocation.from_geocentric(*pos, unit=u.m)
 
 
 def get_min_ipp_distance(ipp_ss: list[IPP], ipp_data: IPP):
@@ -76,17 +74,17 @@ def get_electron_density_gnss(ipp: IPP):
     unique_days_indices = get_indexlist_unique_days(unique_days, ipp.times)
     for day, indices in zip(unique_days, unique_days_indices):
         gnss_list = select_gnss_stations(ipp.loc[indices])
-        dcb = parse_dcb_sinex(download_dcb(date=day.to_datetime()))
-        gnss = download_rinex(date=day.to_datetime(), stations=gnss_list)
-        gnss_data = process_all_rinex_parallel(gnss, times=ipp.times[indices], dcb=dcb)
+        dcb = parse_dcb_sinex(download_dcb(date=day.to_datetime())[0])
+        gnss_file_list = download_rinex(date=day.to_datetime(), stations=gnss_list)
+        gnss_data_list = process_all_rinex_parallel(gnss_file_list, times=ipp.times[indices], dcb=dcb)
         sp3_files = download_satpos_files(date=day.to_datetime())
         sat_clk, gnss_clk = parse_clk_data(sp3_files[-1])
         stec_list = {}
         # TODO: do this in parallel
         stec_gnss_data = {}
-        for gnss_data in gnss:
+        for gnss_data in gnss_data_list:
             if gnss_data.is_valid:
-                if gnss_clk.has_key(gnss_data.station):
+                if gnss_data.station in gnss_clk.keys():
                     clock_correction = (
                         np.mean([i["bias"] for i in gnss_clk[gnss_data.station]]) * u.s
                     )
@@ -98,12 +96,15 @@ def get_electron_density_gnss(ipp: IPP):
                 stec_ipp_list = []
                 for stec in stec_list[gnss_data.station]:
                     sat_pos = get_sat_pos(sp3_files[:3], stec.times, stec.prn)
+                    clock_correction = (
+                        np.mean([i["bias"] for i in sat_clk[str(stec.prn)]]) * u.s
+                    )
                     sat_stat_ipp = get_stat_sat_ipp(
                         satpos=sat_pos,
                         gnsspos=gnss_pos_dict[gnss_data.station],
-                        times=gnss_data.times,
+                        times=stec.times + clock_correction,
                         height_array=HEIGHT_ARRAY,
                     )
                     stec_ipp_list.append(sat_stat_ipp)
-                stec_gnss_data[gnss_data.station] = (stec_list, stec_ipp_list)
+                stec_gnss_data[gnss_data.station] = (stec_list[gnss_data.station], stec_ipp_list)
         return stec_gnss_data
