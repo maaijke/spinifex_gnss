@@ -19,6 +19,17 @@ WL3 = speed_light.value / (FREQL3 * 1e9)
 C12 = 100 / (40.3 * (1.0 / FREQL1**2 - 1.0 / FREQL2**2))
 # 100 because conversion to Hz and to TECU (1e18/1e16)
 
+FREQ = {
+    "G": {"f1": 1575.42e6, "f2": 1227.60e6},  # GPS L1/L2
+    "R": {
+        "f1": 1602.00e6 + 9 * 0.5625e6,
+        "f2": 1246.00e6 + 9 * 0.4375e6,
+    },  # nominal GLONASS; per-slot ideally
+    "E": {"f1": 1575.42e6, "f2": 1191.795e6},  # Galileo E1/E5
+    "C": {"f1": 1561.098e6, "f2": 1207.14e6},  # BeiDou B1/B2
+    "J": {"f1": 1575.42e6, "f2": 1227.60e6},  # QZSS same as GPS
+}
+
 
 class DCBdata(NamedTuple):
     """Object containing differential code biases"""
@@ -165,7 +176,7 @@ def get_gnss_data(gnss_file: Path, times: Time, dcb: dict[Any], station: str):
                     "W",
                     "P",
                 ]  # TODO: Add more possibilities? What is the meaning of these
-                for j in ["C", "W", "P"]
+                for j in ["W", "P", "C"]
                 if f"C1{i}" in labels
                 and f"C2{j}" in labels
                 and f"L1{i}" in labels
@@ -214,6 +225,22 @@ def process_all_rinex_parallel(rinex_files, times: Time, dcb: dict[Any], max_wor
     return results
 
 
+
+def get_cycle_slips(
+    l1_data: np.ndarray[float], l2_data: np.ndarray[float]
+) -> np.ndarray[int]:
+    diff = np.abs(np.diff(l1_data,prepend=l1_data[0]))
+    diff2 = np.abs(np.diff(l2_data,prepend=l2_data[0]))
+    #diff = np.diff(diff, prepend=diff[0])
+    #diff2 = np.diff(diff2, prepend=diff[0])
+
+    slips = np.logical_or(diff > 3*np.nanmedian(diff), diff2 > 3*np.nanmedian(diff2))
+    gaps = np.logical_or(np.isnan(l1_data), np.isnan(l2_data))
+    gaps = np.diff(gaps, prepend=0)>0
+    seg_id = np.cumsum(np.logical_or(slips, gaps).astype(int))
+    return seg_id
+
+
 def get_tec_gnss(
     gnssdata: GNSSData, dcbdata: DCBdata, clock_correction: u.Quantity = 0 * u.ns
 ):
@@ -234,7 +261,7 @@ def get_tec_gnss(
             0
         ]  # first is value second is stddev
     else:
-        dcb_stat=0
+        dcb_stat = 0
     stec_list = []
 
     for prn in gnss[c1_str].sv.values:
@@ -244,18 +271,24 @@ def get_tec_gnss(
             tec_c1c2 = C12 * (
                 gnss[c1_str].sel(sv=prn).values
                 - gnss[c2_str].sel(sv=prn).values
-                - (dcb_stat - dcb_sat)
+                - (dcb_sat + dcb_stat)
             )
             tec_l1l2 = -C12 * (
                 gnss[l1_str].sel(sv=prn).values * WL1
                 - gnss[l2_str].sel(sv=prn).values * WL2
             )
+            distance = gnss[c2_str].sel(sv=prn).values
+            distance[np.isnan(distance)] = 0
             times_of_transmission = (
-                times
-                - (gnss[c2_str].sel(sv=prn).values - (dcb_stat - dcb_sat)) * u.m / speed_light
+                times - (distance - (dcb_sat + dcb_stat)) * u.m / speed_light
             )
+            seg_id = get_cycle_slips(gnss[l1_str].sel(sv=prn).values, gnss[l2_str].sel(sv=prn).values)
+            phase_bias = np.zeros_like(tec_l1l2)
+            for seg in np.unique(seg_id):
+                seg_idx = np.where(seg_id==seg)
 
-            phase_bias = np.nanmean(tec_c1c2 - tec_l1l2)  # TODO: detect cycle slips
+                phase_bias[seg_idx] = np.nanmean(tec_c1c2[seg_idx] - tec_l1l2[seg_idx])  # TODO: better correction of cycle slips, 
+                #if there are too many slips the time is to short for reliable P1-P2 correction 
             tec_l1l2 += phase_bias
             stec_list.append(
                 GNSSTECData(

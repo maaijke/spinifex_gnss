@@ -4,7 +4,7 @@ import astropy.units as u
 
 from astropy.coordinates import EarthLocation, GCRS
 from spinifex.geometry import IPP
-from spinifex.ionospheric import get_density_ionex_single_layer
+from spinifex.ionospheric import get_density_ionex_single_layer, tec_data
 from spinifex.times import get_unique_days, get_indexlist_unique_days
 from download_gnss import download_dcb, download_rinex, download_satpos_files
 from parse_gnss import (
@@ -12,8 +12,10 @@ from parse_gnss import (
     process_all_rinex_parallel,
     parse_clk_data,
     get_tec_gnss,
+    GNSSTECData,
 )
 from gnss_geometry import get_sat_pos, get_stat_sat_ipp
+from typing import Any
 
 MIN_DISTANCE_SELECT = 600 * u.km
 HEIGHT_ARRAY = np.arange(50, 2000, 10) * u.km
@@ -69,6 +71,30 @@ def select_gnss_stations(ipp_location: EarthLocation):
     return gnss_list
 
 
+def remove_gnss_bias_gim(
+    stec_list: list[GNSSTECData], ipp_list: list[IPP]
+) -> GNSSTECData:
+    dtec = []
+    default_options = tec_data.IonexOptions()
+    for ipp,stec in zip(ipp_list,stec_list):
+        select = ipp.altaz.alt.deg > 65
+        h_idx = np.argmin(np.abs(ipp.loc[0].height.to(u.km).value - default_options.height.to(u.km).value))
+        print(np.sum(select))
+        if not np.sum(select):
+            continue
+        ipp_select = IPP(
+            altaz=ipp.altaz[select],
+            airmass=ipp.airmass[select],
+            loc=ipp.loc[select],
+            times=ipp.times[select],
+            los=ipp.los[select],
+            station_loc=ipp.station_loc,
+        )
+        gim_tec = get_density_ionex_single_layer(ipp=ipp_select)
+        dtec.append(np.sum(gim_tec.electron_density,axis=1) - stec.tec_phase[select] / ipp.airmass[select,h_idx]) 
+    #TODO : flag station if varaince of dtec is too large
+    return np.mean(np.concatenatr(dtec))
+
 def get_electron_density_gnss(ipp: IPP):
     unique_days = get_unique_days(ipp.times)
     unique_days_indices = get_indexlist_unique_days(unique_days, ipp.times)
@@ -76,7 +102,9 @@ def get_electron_density_gnss(ipp: IPP):
         gnss_list = select_gnss_stations(ipp.loc[indices])
         dcb = parse_dcb_sinex(download_dcb(date=day.to_datetime())[0])
         gnss_file_list = download_rinex(date=day.to_datetime(), stations=gnss_list)
-        gnss_data_list = process_all_rinex_parallel(gnss_file_list, times=ipp.times[indices], dcb=dcb)
+        gnss_data_list = process_all_rinex_parallel(
+            gnss_file_list, times=ipp.times[indices], dcb=dcb
+        )
         sp3_files = download_satpos_files(date=day.to_datetime())
         sat_clk, gnss_clk = parse_clk_data(sp3_files[-1])
         stec_list = {}
@@ -95,7 +123,9 @@ def get_electron_density_gnss(ipp: IPP):
                 )
                 stec_ipp_list = []
                 for stec in stec_list[gnss_data.station]:
-                    sat_pos = get_sat_pos(sp3_files[:3], stec.times, stec.prn)
+                    sat_pos = get_sat_pos(
+                        sp3_files[:3], stec.times_of_transmission, stec.prn
+                    )
                     clock_correction = (
                         np.mean([i["bias"] for i in sat_clk[str(stec.prn)]]) * u.s
                     )
@@ -106,5 +136,14 @@ def get_electron_density_gnss(ipp: IPP):
                         height_array=HEIGHT_ARRAY,
                     )
                     stec_ipp_list.append(sat_stat_ipp)
-                stec_gnss_data[gnss_data.station] = (stec_list[gnss_data.station], stec_ipp_list)
+                correction = remove_gnss_bias_gim(stec_list=stec_list[gnss_data.station], ipp_list=stec_ipp_list[-1])
+                stec_gnss_data[gnss_data.station] = (
+                    stec_list[gnss_data.station],
+                    stec_ipp_list,
+                    correction
+                )
+        electron_density  = interpolate_to_ipp(stec_gnss_data, ipp.loc[indices], ipp.times[indices])
         return stec_gnss_data
+    
+    def interpolate_to_ipp(stec_data:dict[Any], ipp:EarthLocation, times:Time) :
+        pass
