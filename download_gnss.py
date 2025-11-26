@@ -3,26 +3,8 @@ import gps_time
 from datetime import datetime, timedelta
 from spinifex.download import download_or_copy_url
 from spinifex.asyncio_wrapper import sync_wrapper
-import subprocess
 from pathlib import Path
-from astropy.time import Time
-from typing import NamedTuple
 import requests
-
-
-class RinexFiles(NamedTuple):
-    """Object containing all necessary information to dowload rinex data"""
-
-    filenames: list[list[str]]
-    """list of list with online file names, one per date"""
-    times: list[Time]
-    """list of times for unique days"""
-    dates: Time
-    """unique days"""
-    url: str
-    """url of the data"""
-    stations: list[list[str]]
-    """list of available 4 letter stations"""
 
 
 def get_gps_week(date: datetime):
@@ -65,7 +47,7 @@ def download_satpos_files(
     url: str = "https://cddis.nasa.gov/archive/gnss/products/",
     datapath: Path = Path("/home/mevius/IONO/GPS/data/"),
 ) -> list[Path]:
-    """Get the sp3 position files and corresponding clock errors for a specific date, the day before and the day after for interpoaltion purposes
+    """Get the sp3 position files and corresponding clock errors for a specific date, the day before and the day after for interpolation purposes
 
     Parameters
     ----------
@@ -81,12 +63,7 @@ def download_satpos_files(
     list[Path] : list with the filenames of respectively three sorted sp3 files and clock errors of date
 
     """
-    sp3_files = _download_satpos_files(date, url, datapath)
-    for (
-        fname
-    ) in sp3_files:  # need to unpack because georinex fails on reading zipped sp3 data
-        subprocess.run(["gunzip", "-f", str(fname)])
-    return [i.parent / i.stem for i in sp3_files]
+    return _download_satpos_files(date, url, datapath)
 
 
 async def download_dcb_coro(
@@ -125,20 +102,33 @@ def check_url(url: str):
 async def download_rinex_coro(
     date: datetime,
     stations: list[str],
-    server: str = "https://www.epncb.oma.be/pub/obs/",
     datapath: Path = Path("/home/mevius/IONO/GPS/data/"),
 ):
     # TODO: get naming format for dates and servers (like we do for ionex data)
     urls = []
     year = date.year
+    yy = date.year-2000
     doy = date.timetuple().tm_yday
-    url = f"{server}/{year}/{doy:03d}/"
+    server_list = [
+        "https://cddis.nasa.gov/archive/gnss/data/daily/",
+        "https://www.epncb.oma.be/pub/obs/",
+        "https://webring.gm.ingv.it:44324/rinex/RING/",
+    ]
+    url_list = [
+        f"{server_list[0]}/{year}/{doy:03d}/{yy}d/",
+        f"{server_list[1]}/{year}/{doy:03d}/",
+        f"{server_list[2]}/{year}/{doy:03d}/",
+    ]
     for station in stations:
         fname = f"{station}_R_{year}{doy:03d}0000_01D_30S_MO.crx.gz"
-        if check_url(f"{url}{fname}"):
-            urls.append(f"{url}{fname}")
-        else:
-            print(f"{url}{fname} not existing")
+        found = False
+        for url in url_list:
+            if check_url(f"{url}{fname}"):
+                urls.append(f"{url}{fname}")
+                found = True
+                break
+        if not found:
+            print(f"{fname} not existing")
 
     coros = []
     for url in urls:

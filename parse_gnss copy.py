@@ -4,10 +4,13 @@ import numpy as np
 from astropy.constants import c as speed_light
 from astropy.time import Time
 import astropy.units as u
-from typing import NamedTuple, Any, TextIO
+from typing import NamedTuple, Any
+import georinex
+import xarray
 import concurrent.futures
 from datetime import datetime
-from parse_rinex import get_rinex_data, RinexData
+import subprocess
+from parse_rinex import get_rinex_data
 
 FREQL1 = 1.57542
 FREQL2 = 1.2276
@@ -15,9 +18,7 @@ FREQL3 = 1.176
 WL1 = speed_light.value / (FREQL1 * 1e9)
 WL2 = speed_light.value / (FREQL2 * 1e9)
 WL3 = speed_light.value / (FREQL3 * 1e9)
-C12 = 100 / (
-    40.3 * (1.0 / FREQL1**2 - 1.0 / FREQL2**2)
-)  # move to general frequencies see below
+C12 = 100 / (40.3 * (1.0 / FREQL1**2 - 1.0 / FREQL2**2))  #move to general frequencies see below
 # 100 because conversion to Hz and to TECU (1e18/1e16)
 
 FREQ = {
@@ -32,6 +33,7 @@ FREQ = {
 }
 
 
+
 class DCBdata(NamedTuple):
     """Object containing differential code biases"""
 
@@ -44,7 +46,7 @@ class DCBdata(NamedTuple):
 class GNSSData(NamedTuple):
     """Object containing xarray and some metadata for gnss"""
 
-    gnss: RinexData | None
+    gnss: xarray.Dataset | None
     """the data"""
     c1_str: str
     """label for pseudorange 1"""
@@ -90,7 +92,7 @@ dummy_gnss_data = lambda station: GNSSData(
     has_dcb=False,
     is_valid=False,
     station=station,
-    times=None,
+    times=None
 )
 
 
@@ -146,13 +148,16 @@ def _read_dcb_data(file_buffer):
     return DCBdata(dcb=dcb, station_code_combination=station_code_combination)
 
 
-
-
-def get_gnss_data(gnss_file: Path, dcb: dict[Any], station: str):
+def get_gnss_data_rx2(gnss_file: Path, times: Time, dcb: dict[Any], station: str):
     try:
-        rinex_data = get_rinex_data(gnss_file)
-        rxlabels = rinex_data.header.datatypes["G"]
-        labels = [i for i in sorted(rxlabels) if i[1] == "1" or i[1] == "2"]
+        # first load 1s to see available measurements
+        gnss = georinex.load(
+            gnss_file, tlim=[times[0].isot, (times[0] + 1 * u.min).isot]
+        )
+        # get L1, L2 data
+        labels = [
+            i for i in sorted(gnss.data_vars.keys()) if i[1] == "1" or i[1] == "2"
+        ]
         dcb_labels = [
             i.split("_")[1:]
             for i in dcb.station_code_combination
@@ -163,8 +168,78 @@ def get_gnss_data(gnss_file: Path, dcb: dict[Any], station: str):
             for i, j in dcb_labels
             if i in labels
             and j in labels
-            and i[1] == "1"
-            and j[1] == "2"
+            and f"L1{i[2]}" in labels
+            and f"L2{i[2]}" in labels
+        ]
+        has_dcb = True
+        if not c_tracking:
+            print(
+                f"no consistent pseudorange codes in {labels} and {dcb_labels}, continue without dcb"
+            )
+            has_dcb = False
+            c_tracking = [
+                (f"C1{i}", f"C2{j}")
+                for i in [
+                    "C",
+                    "W",
+                    "P",
+                ]  # TODO: Add more possibilities? What is the meaning of these
+                for j in ["W", "P", "C"]
+                if f"C1{i}" in labels
+                and f"C2{j}" in labels
+                and f"L1{i}" in labels
+                and f"L2{j}" in labels
+            ]
+            if not c_tracking:
+                print(f"no consistent pseudorange codes in {labels}")
+                return dummy_gnss_data(station=station)
+        c_tracking = c_tracking[0]
+        gnss = georinex.load(
+            gnss_file,
+            meas=[
+                f"L1{c_tracking[0][-1]}",
+                f"L2{c_tracking[1][-1]}",
+                c_tracking[0],
+                c_tracking[1],
+            ],
+            #            tlim=[times[0].isot, (times[-1] + 1 * u.min).isot], #No time limit, this shoudl improve calibration
+        )
+        return GNSSData(
+            gnss=gnss,
+            c1_str=c_tracking[0],
+            c2_str=c_tracking[1],
+            l1_str=f"L1{c_tracking[0][-1]}",
+            l2_str=f"L2{c_tracking[1][-1]}",
+            has_dcb=has_dcb,
+            is_valid=True,
+            station=station,
+        )
+    except:
+        print(f"failed for station {station}")
+        return dummy_gnss_data(station=station)
+
+
+def get_gnss_data(gnss_file: Path, dcb: dict[Any], station: str):
+    try:
+        rinex_data = get_rinex_data(gnss_file)
+        rxlabels = rinex_data.header.datatypes["G"]
+        labels = [
+            i
+            for i in sorted(rxlabels)
+            if i[1] == "1" or i[1] == "2"
+        ]
+        dcb_labels = [
+            i.split("_")[1:]
+            for i in dcb.station_code_combination
+            if i.split("_")[0] == station[:4]
+        ]
+        c_tracking = [
+            (i, j)
+            for i, j in dcb_labels
+            if i in labels
+            and j in labels
+            and i[1]=='1'
+            and j[1]=='2'
             and f"L1{i[2]}" in labels
             and f"L2{j[2]}" in labels
         ]
@@ -201,7 +276,7 @@ def get_gnss_data(gnss_file: Path, dcb: dict[Any], station: str):
         idx_l2 = rxlabels.index(l2_str)
         data = {}
         for key, rxdata in rinex_data.data.items():
-            if key[0] == "G":
+            if key[0] == 'G':
                 data[key] = rxdata[:, (idx_c1, idx_c2, idx_l1, idx_l2)]
         return GNSSData(
             c1_str=c1_str,
@@ -212,7 +287,7 @@ def get_gnss_data(gnss_file: Path, dcb: dict[Any], station: str):
             station=station,
             has_dcb=has_dcb,
             is_valid=True,
-            times=rinex_data.times,
+            times = rinex_data.times
         )
 
     except:
@@ -236,12 +311,11 @@ def process_all_rinex_parallel(rinex_files, times: Time, dcb: dict[Any], max_wor
 
 def get_cycle_slips(tec_l1l2: np.ndarray[float]) -> np.ndarray[int]:
     diff = np.abs(np.diff(tec_l1l2, prepend=tec_l1l2[0]))
-    slips = diff > 3 * np.nanmedian(diff)
+    slips= diff > 3 * np.nanmedian(diff)
     gaps = np.isnan(tec_l1l2)
     gaps = np.diff(gaps, prepend=0) > 0
     seg_id = np.cumsum(np.logical_or(slips, gaps).astype(int))
     return seg_id
-
 
 def get_tec_gnss(
     gnssdata: GNSSData,
@@ -307,24 +381,35 @@ def get_tec_gnss(
     return stec_list
 
 
-def _parse_clk_file(clkfile:TextIO) -> dict[Any]:
-    satstat_clk = {}
-    for line in clkfile:
-        parts = line.split()
-        sat_name = parts[1]
-        date_str = " ".join(parts[2:8])
-        clk_bias = float(parts[9])  # clock bias (seconds)
-        epoch = datetime.strptime(date_str, "%Y %m %d %H %M %S.%f")
+def parse_clk_data(clkfile: Path) -> dict[Any]:
 
-        satstat_clk.setdefault(sat_name, []).append({"epoch": epoch, "bias": clk_bias})
-    return satstat_clk
-
-
-def parse_clk_data(clkfile: Path) -> dict[Any]:  # rewrite to
-
+    satellites = {}
+    stations = {}
     if clkfile.suffix == ".gz":
-        with gzip.open(clkfile) as myf:
-            return _parse_clk_file(myf)
-    else:
-        with open(clkfile) as myf:
-            return _parse_clk_file(myf)
+        subprocess.run(["gunzip", "-f", str(clkfile)])
+        clkfile = clkfile.parent / clkfile.stem
+    with open(clkfile) as myf:
+        for line in myf:
+            if line.startswith("AS"):  # Satellite record
+                parts = line.split()
+                sat_name = parts[1]
+                date_str = " ".join(parts[2:8])
+                clk_bias = float(parts[9])  # clock bias (seconds)
+                epoch = datetime.strptime(date_str, "%Y %m %d %H %M %S.%f")
+
+                satellites.setdefault(sat_name, []).append(
+                    {"epoch": epoch, "bias": clk_bias}
+                )
+
+            elif line.startswith("AR"):  # Station record
+                parts = line.split()
+                sta_name = parts[1]
+                date_str = " ".join(parts[2:8])
+                clk_bias = float(parts[9])
+                epoch = datetime.strptime(date_str, "%Y %m %d %H %M %S.%f")
+
+                stations.setdefault(sta_name, []).append(
+                    {"epoch": epoch, "bias": clk_bias}
+                )
+    subprocess.run(["gzip", "-f", str(clkfile)])
+    return satellites, stations
