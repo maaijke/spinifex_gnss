@@ -9,26 +9,47 @@ import concurrent.futures
 from datetime import datetime
 from parse_rinex import get_rinex_data, RinexData
 
-FREQL1 = 1.57542
-FREQL2 = 1.2276
-FREQL3 = 1.176
-WL1 = speed_light.value / (FREQL1 * 1e9)
-WL2 = speed_light.value / (FREQL2 * 1e9)
-WL3 = speed_light.value / (FREQL3 * 1e9)
-C12 = 100 / (
-    40.3 * (1.0 / FREQL1**2 - 1.0 / FREQL2**2)
-)  # move to general frequencies see below
-# 100 because conversion to Hz and to TECU (1e18/1e16)
 
-FREQ = {
-    "G": {"f1": 1575.42e6, "f2": 1227.60e6},  # GPS L1/L2
-    "R": {
-        "f1": 1602.00e6 + 9 * 0.5625e6,
-        "f2": 1246.00e6 + 9 * 0.4375e6,
-    },  # nominal GLONASS; per-slot ideally
-    "E": {"f1": 1575.42e6, "f2": 1191.795e6},  # Galileo E1/E5
-    "C": {"f1": 1561.098e6, "f2": 1207.14e6},  # BeiDou B1/B2
-    "J": {"f1": 1575.42e6, "f2": 1227.60e6},  # QZSS same as GPS
+# ------------------------------------------------------------
+# Mapping of preferred GNSS observation codes, in priority order
+# ------------------------------------------------------------
+GNSS_OBS_PRIORITY = {
+    "G": {  # GPS
+        "C1": ["C1W", "C1P", "C1C", "C1Y"],  # W/P(Y) > C/A
+        "C2": ["C2W", "C2P", "C2Y", "C2L", "C2X"],
+        "L1": ["L1W", "L1P", "L1Y", "L1C"],
+        "L2": ["L2W", "L2P", "L2Y", "L2L", "L2X"],
+    },
+    "E": {  # Galileo
+        "C1": ["C1C", "C1X"],  # E1
+        "C2": ["C5Q", "C5X"],  # E5a (1176 MHz)
+        "L1": ["L1C", "L1X"],
+        "L2": ["L5Q", "L5X"],
+    },
+    "R": {  # GLONASS
+        "C1": ["C1C", "C1P"],
+        "C2": ["C2C", "C2P"],
+        "L1": ["L1C", "L1P"],
+        "L2": ["L2C", "L2P"],
+    },
+    "C": {  # BeiDou-3 (priority); fallback to BeiDou-2
+        "C1": ["C1C", "C1X", "C2I"],  # B1C > B1I
+        "C2": ["C5Q", "C5X", "C6I"],  # B2a > B3I
+        "L1": ["L1C", "L1X", "L2I"],
+        "L2": ["L5Q", "L5X", "L6I"],
+    },
+    "J": {  # QZSS
+        "C1": ["C1C", "C1X"],
+        "C2": ["C2L", "C2W", "C2X"],
+        "L1": ["L1C", "L1X"],
+        "L2": ["L2L", "L2W", "L2X"],
+    },
+    "I": {  # NavIC / IRNSS
+        "C1": ["C5Q"],  # L5
+        "C2": ["CSQ"],  # S-band
+        "L1": ["L5Q"],
+        "L2": ["LSQ"],
+    },
 }
 
 
@@ -42,7 +63,7 @@ class DCBdata(NamedTuple):
 
 
 class GNSSData(NamedTuple):
-    """Object containing xarray and some metadata for gnss"""
+    """Object containing data dictionary and some metadata for gnss, one per constellation"""
 
     gnss: RinexData | None
     """the data"""
@@ -61,27 +82,11 @@ class GNSSData(NamedTuple):
     is_valid: bool
     """Does this have valid gnss data"""
     times: Time
+    """Constellation"""
+    constellation: str
 
 
-class GNSSTECData(NamedTuple):
-    """Object containing the estimated sTEC values for a single station satellite combination,
-    as well as the transmission time correction"""
-
-    tec_pseudorange: np.ndarray[float]
-    """stec estimated from pseudorange"""
-    tec_phase: np.ndarray[float]
-    """stec estimated from phases"""
-    times: Time
-    """times of gnss station"""
-    times_of_transmission: Time
-    """corrected transmision times of satellite"""
-    station: str
-    """station name"""
-    prn: str
-    """prn code (satellite)"""
-
-
-dummy_gnss_data = lambda station: GNSSData(
+dummy_gnss_data = lambda station, constellation: GNSSData(
     gnss=None,
     c1_str="",
     c2_str="",
@@ -91,6 +96,7 @@ dummy_gnss_data = lambda station: GNSSData(
     is_valid=False,
     station=station,
     times=None,
+    constellation=constellation,
 )
 
 
@@ -146,78 +152,83 @@ def _read_dcb_data(file_buffer):
     return DCBdata(dcb=dcb, station_code_combination=station_code_combination)
 
 
-
-
 def get_gnss_data(gnss_file: Path, dcb: dict[Any], station: str):
-    try:
-        rinex_data = get_rinex_data(gnss_file)
-        rxlabels = rinex_data.header.datatypes["G"]
-        labels = [i for i in sorted(rxlabels) if i[1] == "1" or i[1] == "2"]
-        dcb_labels = [
-            i.split("_")[1:]
-            for i in dcb.station_code_combination
-            if i.split("_")[0] == station[:4]
-        ]
-        c_tracking = [
-            (i, j)
-            for i, j in dcb_labels
-            if i in labels
-            and j in labels
-            and i[1] == "1"
-            and j[1] == "2"
-            and f"L1{i[2]}" in labels
-            and f"L2{j[2]}" in labels
-        ]
-        has_dcb = True
-        if not c_tracking:
-            print(
-                f"no consistent pseudorange codes in {labels} and {dcb_labels}, continue without dcb"
-            )
-            has_dcb = False
-            c_tracking = [
-                (f"C1{i}", f"C2{j}")
-                for i in [
-                    "C",
-                    "W",
-                    "P",
-                ]  # TODO: Add more possibilities? What is the meaning of these
-                for j in ["W", "P", "C"]
-                if f"C1{i}" in labels
-                and f"C2{j}" in labels
-                and f"L1{i}" in labels
-                and f"L2{j}" in labels
+    rinex_data = get_rinex_data(gnss_file)
+    constellations = rinex_data.header.datatypes.keys()
+    gnss_data_list = []
+    for constellation in constellations:
+        try:
+            c1c2_labels = GNSS_OBS_PRIORITY[constellation]
+            rxlabels = rinex_data.header.datatypes[constellation]
+            labels = [i for i in sorted(rxlabels) if i[1] == "1" or i[1] == "2"]
+            dcb_labels = [
+                i.split("_")[1:]
+                for i in dcb.station_code_combination
+                if i.split("_")[0] == station[:4]
             ]
+            c_tracking = [
+                (i, j)
+                for i, j in dcb_labels
+                if i in labels
+                and j in labels
+                and i[1] == "1"
+                and j[1] == "2"
+                and f"L1{i[2]}" in labels
+                and f"L2{j[2]}" in labels
+            ]
+            has_dcb = True
             if not c_tracking:
-                print(f"no consistent pseudorange codes in {labels}")
-                return dummy_gnss_data(station=station)
-        c_tracking = c_tracking[0]
-        c1_str = c_tracking[0]
-        c2_str = c_tracking[1]
-        l1_str = f"L1{c_tracking[0][-1]}"
-        l2_str = f"L2{c_tracking[1][-1]}"
-        idx_c1 = rxlabels.index(c1_str)
-        idx_c2 = rxlabels.index(c2_str)
-        idx_l1 = rxlabels.index(l1_str)
-        idx_l2 = rxlabels.index(l2_str)
-        data = {}
-        for key, rxdata in rinex_data.data.items():
-            if key[0] == "G":
-                data[key] = rxdata[:, (idx_c1, idx_c2, idx_l1, idx_l2)]
-        return GNSSData(
-            c1_str=c1_str,
-            c2_str=c2_str,
-            l1_str=l1_str,
-            l2_str=l2_str,
-            gnss=data,
-            station=station,
-            has_dcb=has_dcb,
-            is_valid=True,
-            times=rinex_data.times,
-        )
+                print(
+                    f"no consistent pseudorange codes in {labels} and {dcb_labels}, continue without dcb"
+                )
+                has_dcb = False
+                c_tracking = [
+                    (i, j)
+                    for i in c1c2_labels["C1"]
+                    for j in c1c2_labels["C2"]
+                    if i in labels
+                    and j in labels
+                    and f"L1{i[-1]}" in labels
+                    and f"L2{j[-1]}" in labels
+                ]
 
-    except:
-        print(f"failed for station {station}")
-        return dummy_gnss_data(station=station)
+                if not c_tracking:
+                    print(f"no consistent pseudorange codes in {labels}")
+                    return dummy_gnss_data(station=station)
+            c_tracking = c_tracking[0]
+            c1_str = c_tracking[0]
+            c2_str = c_tracking[1]
+            l1_str = f"L1{c_tracking[0][-1]}"
+            l2_str = f"L2{c_tracking[1][-1]}"
+            idx_c1 = rxlabels.index(c1_str)
+            idx_c2 = rxlabels.index(c2_str)
+            idx_l1 = rxlabels.index(l1_str)
+            idx_l2 = rxlabels.index(l2_str)
+            data = {}
+            for key, rxdata in rinex_data.data.items():
+                if key[0] == "G":
+                    data[key] = rxdata[:, (idx_c1, idx_c2, idx_l1, idx_l2)]
+            gnss_data_list.append(
+                GNSSData(
+                    c1_str=c1_str,
+                    c2_str=c2_str,
+                    l1_str=l1_str,
+                    l2_str=l2_str,
+                    gnss=data,
+                    station=station,
+                    has_dcb=has_dcb,
+                    is_valid=True,
+                    times=rinex_data.times,
+                    constellation=constellation,
+                )
+            )
+
+        except:
+            print(f"failed for station {station} {constellation}")
+            gnss_data_list.append(
+                dummy_gnss_data(station=station, constellation=constellation)
+            )
+    return gnss_data_list
 
 
 def process_all_rinex_parallel(rinex_files, times: Time, dcb: dict[Any], max_workers=6):
@@ -230,84 +241,11 @@ def process_all_rinex_parallel(rinex_files, times: Time, dcb: dict[Any], max_wor
             for rf in rinex_files
         }
         for fut in concurrent.futures.as_completed(futures):
-            results.append(fut.result())
+            results += fut.result()
     return results
 
 
-def get_cycle_slips(tec_l1l2: np.ndarray[float]) -> np.ndarray[int]:
-    diff = np.abs(np.diff(tec_l1l2, prepend=tec_l1l2[0]))
-    slips = diff > 3 * np.nanmedian(diff)
-    gaps = np.isnan(tec_l1l2)
-    gaps = np.diff(gaps, prepend=0) > 0
-    seg_id = np.cumsum(np.logical_or(slips, gaps).astype(int))
-    return seg_id
-
-
-def get_tec_gnss(
-    gnssdata: GNSSData,
-    dcbdata: DCBdata,
-    clock_correction: u.Quantity = 0 * u.ns,
-    timestep: int = 1,
-):
-    if not gnssdata.is_valid:
-        raise ValueError("gnssdata not valid")
-    gnss = gnssdata.gnss
-    dcb = dcbdata.dcb
-    dcbkeys = dcbdata.station_code_combination
-    # get geometry free range
-    station = gnssdata.station
-    c1_str = gnssdata.c1_str
-    c2_str = gnssdata.c2_str
-    times = Time(gnssdata.times) - clock_correction  # note: this is gpstime
-    if gnssdata.has_dcb:
-        dcb_stat = dcb[dcbkeys.index(f"{station[:4]}_{c1_str}_{c2_str}")][
-            0
-        ]  # first is value second is stddev
-    else:
-        dcb_stat = 0
-    stec_list = []
-
-    for prn in gnss.keys():
-        if f"{str(prn)}_{c1_str}_{c2_str}" in dcbkeys:
-            index = dcbkeys.index(f"{str(prn)}_{c1_str}_{c2_str}")
-            dcb_sat = dcb[index][0]
-            tec_c1c2 = C12 * (
-                gnss[prn][:, 0]
-                - gnss[prn][:, 1]
-                - (
-                    dcb_sat + dcb_stat
-                )  # according to rinex3 definition there should be a minus sign here, but the data shows otherwise
-            )
-            tec_l1l2 = -C12 * (gnss[prn][:, 2] * WL1 - gnss[prn][:, 3] * WL2)
-            distance = gnss[prn][:, 1]
-            distance[np.isnan(distance)] = 0
-            times_of_transmission = (
-                times - (distance - (dcb_sat + dcb_stat)) * u.m / speed_light
-            )
-            seg_id = get_cycle_slips(tec_l1l2)
-            phase_bias = np.zeros_like(tec_l1l2)
-            for seg in np.unique(seg_id):
-                seg_idx = np.where(seg_id == seg)
-
-                phase_bias[seg_idx] = np.nanmean(
-                    tec_c1c2[seg_idx] - tec_l1l2[seg_idx]
-                )  # TODO: better correction of cycle slips,
-                # if there are too many slips the time is to short for reliable P1-P2 correction
-            tec_l1l2 += phase_bias
-            stec_list.append(
-                GNSSTECData(
-                    tec_phase=tec_l1l2[::timestep],
-                    tec_pseudorange=tec_c1c2[::timestep],
-                    station=station,
-                    prn=prn,
-                    times=times[::timestep],
-                    times_of_transmission=times_of_transmission[::timestep],
-                )
-            )
-    return stec_list
-
-
-def _parse_clk_file(clkfile:TextIO) -> dict[Any]:
+def _parse_clk_file(clkfile: TextIO) -> dict[Any]:
     satstat_clk = {}
     for line in clkfile:
         parts = line.split()
