@@ -207,7 +207,6 @@ def get_gim_correction(
     # make sure found biases are stored,
     # maybe don't call for stations that have an existing bias estimate?
     # Also, use the same bias for multiple days, this prevents midnight jumps
-    dtec = []
     default_options = tec_data.IonexOptions()
     # get ionex interpolated tec for all ipps at once
     times = ipp_sat_stat[0].times[::timestep]
@@ -227,7 +226,7 @@ def get_gim_correction(
         )
         for ipp, el, stec in zip(ipp_sat_stat, elevation, stec_data)
     ]
-    print([(ipp[0].shape, ipp[1].shape, ipp[2].shape, ipp[3].shape) for ipp in ippdata])
+    # use expert functionality of mainpulate_ionex to speed up
     sorted_ionex_paths = _download_ionex(times=times, options=default_options)
     ionex = read_ionex(sorted_ionex_paths[0], None, options=default_options)
     gim_tec = interpolate_ionex(
