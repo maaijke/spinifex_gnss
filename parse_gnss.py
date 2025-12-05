@@ -153,7 +153,11 @@ def _read_dcb_data(file_buffer):
 
 
 def get_gnss_data(gnss_file: Path, dcb: dict[Any], station: str):
-    rinex_data = get_rinex_data(gnss_file)
+    try:
+        rinex_data = get_rinex_data(gnss_file)
+    except:
+        print(f"rinex data failed for station {station}")
+        return []
     constellations = rinex_data.header.datatypes.keys()
     gnss_data_list = []
     for constellation in constellations:
@@ -206,7 +210,7 @@ def get_gnss_data(gnss_file: Path, dcb: dict[Any], station: str):
             idx_l2 = rxlabels.index(l2_str)
             data = {}
             for key, rxdata in rinex_data.data.items():
-                if key[0] == "G":
+                if key[0] == constellation:
                     data[key] = rxdata[:, (idx_c1, idx_c2, idx_l1, idx_l2)]
             gnss_data_list.append(
                 GNSSData(
@@ -231,7 +235,7 @@ def get_gnss_data(gnss_file: Path, dcb: dict[Any], station: str):
     return gnss_data_list
 
 
-def process_all_rinex_parallel(rinex_files, times: Time, dcb: dict[Any], max_workers=6):
+def process_all_rinex_parallel(rinex_files, dcb: dict[Any], max_workers=8):
     """Run get_gnss_data in parallel and gather results."""
 
     results = []

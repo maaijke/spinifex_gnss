@@ -6,11 +6,16 @@ from gnss_geometry import get_stat_sat_ipp, get_sat_pos
 from astropy.constants import c as speed_light
 import astropy.units as u
 from spinifex.ionospheric import get_density_ionex_single_layer, tec_data
+from spinifex.ionospheric.ionex_manipulation import (
+    _download_ionex,
+    read_ionex,
+    interpolate_ionex,
+)
 from spinifex.ionospheric.iri_density import get_profile
 from astropy.coordinates import EarthLocation
 from concurrent.futures import as_completed, ProcessPoolExecutor
 
-DISTANCE_DEGREES_CUT = 10
+DISTANCE_KM_CUT = 500
 ELEVATION_CUT = 35
 
 
@@ -59,7 +64,7 @@ def get_transmission_time(
     -------
     Time
         transmission time
-    """    
+    """
     distance = np.copy(c2)
     distance[np.isnan(distance)] = 0
     return times - (distance - (dcb_sat + dcb_stat)) * u.m / speed_light
@@ -72,7 +77,7 @@ def getpseudorange_tec(
     dcb_stat: float,
     constellation: str = "G",
 ) -> np.ndarray:
-    """Calculate stec based on pseudoranges 
+    """Calculate stec based on pseudoranges
 
     Parameters
     ----------
@@ -91,11 +96,10 @@ def getpseudorange_tec(
     -------
     np.ndarray
         pseudorange stec values for all times, nan if satellite not in sight
-    """    
-    C12 = 1e-16 / (
-        40.3
-        * (1.0 / FREQ[constellation]["f1"] ** 2 - 1.0 / FREQ[constellation]["f2"] ** 2)
-    )
+    """
+    f1 = FREQ[constellation]["f1"]
+    f2 = FREQ[constellation]["f2"]
+    C12 = 1e-16 / (40.3 * (1.0 / f1**2 - 1.0 / f2**2))
     return C12 * (
         c1
         - c2
@@ -123,7 +127,7 @@ def getphase_tec(
     -------
     np.ndarray
         carrier phase stec values for all times, nan if satellite not in sight
-    """     
+    """
     C12 = 1e-16 / (
         40.3
         * (1.0 / FREQ[constellation]["f1"] ** 2 - 1.0 / FREQ[constellation]["f2"] ** 2)
@@ -145,9 +149,11 @@ def _get_cycle_slips(phase_tec: np.ndarray) -> np.ndarray:
     -------
     np.ndarray
         array with indices of continues data
-    """    
+    """
     diff = np.abs(np.diff(phase_tec, prepend=phase_tec[0]))
-    slips = diff > 3 * np.nanmedian(diff)
+    slips = diff > 5 * np.nanmedian(
+        diff
+    )  # it tends to flag also the large tec gradients, however these are normally at low elevations..
     gaps = np.isnan(phase_tec)
     gaps = np.diff(gaps, prepend=0) > 0
     seg_id = np.cumsum(np.logical_or(slips, gaps).astype(int))
@@ -168,7 +174,7 @@ def _get_phase_corrected(phase_tec: np.ndarray, pseudo_tec: np.ndarray) -> np.nd
     -------
     np.ndarray
         bias corrected stec values
-    """    
+    """
     cycle_slips = _get_cycle_slips(phase_tec=phase_tec)
     phase_bias = np.zeros_like(phase_tec)
     for seg in np.unique(cycle_slips):
@@ -179,14 +185,14 @@ def _get_phase_corrected(phase_tec: np.ndarray, pseudo_tec: np.ndarray) -> np.nd
 
 
 def get_gim_correction(
-    stec_data: list[np.ndarray[float]], ipp_sat_stat: list[IPP], timestep: int = 10
+    stec_data: np.ndarray, ipp_sat_stat: list[IPP], timestep: int = 10
 ) -> float:
     """
     Determine station biases based on GIM values
     Parameters
     ----------
-    stec_data : list[np.ndarray[float]]
-        measured stec data of a single gnss receiver many satellites of the same constellation
+    stec_data : np.ndarray[float]
+        measured stec data of a single gnss receiver many satellites of the same constellation, shape prn x time
     ipp_sat_stat : list[IPP]
         list of the ipps of the station satellite pairs at fixed altitude
     timestep : int, optional
@@ -196,41 +202,53 @@ def get_gim_correction(
     -------
     float
         the estimated station bias
-    """    
+    """
+    # TODO: calling this function for every station/constellation combination is expensive,
+    # make sure found biases are stored,
+    # maybe don't call for stations that have an existing bias estimate?
+    # Also, use the same bias for multiple days, this prevents midnight jumps
     dtec = []
     default_options = tec_data.IonexOptions()
-    for ipp, stec in zip(ipp_sat_stat, stec_data):
-        if type(ipp) == bool and not ipp:
-            continue
-        select = ipp.altaz.alt.deg[::timestep] > 65  # only use elevations above 65
-        h_idx = np.argmin(
-            np.abs(
-                ipp.loc[0].height.to(u.km).value - default_options.height.to(u.km).value
-            )
+    # get ionex interpolated tec for all ipps at once
+    times = ipp_sat_stat[0].times[::timestep]
+    h_idx = np.argmin(
+        np.abs(
+            ipp_sat_stat[0].loc[0].height.to(u.km).value
+            - default_options.height.to(u.km).value
         )
-        if not np.sum(select):
-            continue
-        ipp_select = IPP(
-            altaz=ipp.altaz[::timestep][select],
-            airmass=ipp.airmass[::timestep][select],
-            loc=ipp.loc[::timestep][select],
-            times=ipp.times[::timestep][select],
-            los=ipp.los[::timestep][select],
-            station_loc=ipp.station_loc,
+    )
+    elevation = [ipp.altaz.alt.deg[::timestep] for ipp in ipp_sat_stat]
+    ippdata = [
+        (
+            ipp.loc.lon.deg[::timestep, h_idx][el > 65],
+            ipp.loc.lat.deg[::timestep, h_idx][el > 65],
+            ipp.times.mjd[::timestep][el > 65],
+            stec[::timestep][el > 65] / ipp.airmass[::timestep, h_idx][el > 65],
         )
-        gim_tec = get_density_ionex_single_layer(ipp=ipp_select)
-        dtec.append(
-            np.sum(gim_tec.electron_density, axis=1)
-            - stec.tec_phase[::timestep][select] / ipp_select.airmass[:, h_idx]
-        )
-    # TODO : flag station if variance of dtec is too large, improve on gim based bias corrections, convert gps_time to utc?
-    return np.nanmean(np.concatenate(dtec))
+        for ipp, el, stec in zip(ipp_sat_stat, elevation, stec_data)
+    ]
+    print([(ipp[0].shape, ipp[1].shape, ipp[2].shape, ipp[3].shape) for ipp in ippdata])
+    sorted_ionex_paths = _download_ionex(times=times, options=default_options)
+    ionex = read_ionex(sorted_ionex_paths[0], None, options=default_options)
+    gim_tec = interpolate_ionex(
+        ionex,
+        np.concatenate([ipp[0] for ipp in ippdata]),
+        np.concatenate([ipp[1] for ipp in ippdata]),
+        Time(np.concatenate([ipp[2] for ipp in ippdata]), format="mjd"),
+        apply_earth_rotation=default_options.apply_earth_rotation,
+    )
+    return np.nanmean(gim_tec - np.concatenate([ipp[3] for ipp in ippdata]))
 
 
-def _get_distance_degrees(loc1: EarthLocation, loc2: EarthLocation) -> float:
-    return (
-        (loc1.lon.deg - loc2.lon.deg) ** 2 + (loc1.lat.deg - loc2.lat.deg) ** 2
-    ) ** 0.5  # TODO: make more correct (but as fast) estimate
+def _get_distance_km(loc1: EarthLocation, loc2: EarthLocation) -> float:
+    # return (
+    #    (loc1.lon.deg - loc2.lon.deg) ** 2 + (loc1.lat.deg - loc2.lat.deg) ** 2
+    # ) ** 0.5  # TODO: make more correct (but as fast) estimate
+    return np.linalg.norm(
+        u.Quantity(loc1.geocentric).to(u.km).value
+        - u.Quantity(loc2.geocentric).to(u.km).value,
+        axis=0,
+    )
 
 
 def _get_distance_ipp(
@@ -259,46 +277,60 @@ def _get_distance_ipp(
     -------
     list[list[np.ndarray]]
         list (times) of list (heights) of array with vtec, dlongitude (deg), dlatitude (deg) of selected satellites
-    """    
+    """
+    # TODO: this function is too expensive. Needed to reduce memory usage,
+    # but can be implemented in a way with less loops
     # stec_values : prn x gnss_times
-    vtec_dlong_dlat_list = []
-    for loc, timeidx, profile in zip(ipp_target.loc, timeselect, profiles):
-        # loop over times
-        vtec_dlong_dlat_list.append([])
-        el_select = [
-            i
-            for i, ipp in enumerate(ipp_sat_stat)
-            if ipp.altaz[timeidx].alt.deg > ELEVATION_CUT
+    Ntimes = ipp_target.times.shape[0]
+    Nheights = ipp_target.loc[0].shape[0]
+    Nprns = stec_values.shape[0]
+    vtecs = np.ones((Nprns, Ntimes, Nheights), dtype=float)
+    vtecs[:] = np.nan
+    el_select = np.array(
+        [ipp.altaz.alt.deg[timeselect] > ELEVATION_CUT for ipp in ipp_sat_stat]
+    )  # prn x times
+    el_select = np.logical_and(~np.isnan(stec_values[:, timeselect]), el_select)
+    dist_select = np.array(
+        [
+            _get_distance_km(ipp.loc[timeselect], ipp_target.loc) < DISTANCE_KM_CUT
+            for ipp in ipp_sat_stat
         ]
-        weighted_am = [
-            np.sum(profile * ipp_sat_stat[i].airmass) for i in prn_select
-        ]  # this gives the best (?) estimate of stec to vtec correction,
-        # making sure that the sum over all vtec_i * am_i gives the measured stec
-        for hidx, hloc in enumerate(loc):
-            # loop over altitudes
-            prn_select = [
-                (i, am_weight)
-                for i, am_weight in zip(el_select, weighted_am)
-                if _get_distance_degrees(ipp_sat_stat[i].loc[timeidx, hidx], hloc)
-                < DISTANCE_DEGREES_CUT
-            ]
-
-            vtec_dlong_dlat_list[-1].append(
-                np.concatenate(
-                    [
-                        np.array(
-                            stec_values[i, timeidx]
-                            * profiles[timeidx, hidx]
-                            / am_weight,
-                            ipp_sat_stat[i].loc[timeidx, hidx].lon.deg - hloc.lon.deg,
-                            ipp_sat_stat[i].loc[timeidx, hidx].lat.deg - hloc.lat.deg,
-                        )[np.newaxis]
-                        for i, am_weight in prn_select
+    )  # prn x times X heights
+    prn_select = np.logical_and(el_select[:, :, np.newaxis], dist_select)
+    weighted_am = np.array(
+        [profiles * ipp.airmass[timeselect] for ipp in ipp_sat_stat]
+    )  # prn x times x heights
+    weighted_am = np.sum(weighted_am, axis=-1)
+    vtec_values = (
+        profiles * (stec_values[:, timeselect] / weighted_am)[..., np.newaxis]
+    )  # prn x times x heights
+    dlons = np.array(
+        [ipp.loc.lon.deg[timeselect] - ipp_target.loc.lon.deg for ipp in ipp_sat_stat]
+    )
+    dlats = np.array(
+        [ipp.loc.lat.deg[timeselect] - ipp_target.loc.lat.deg for ipp in ipp_sat_stat]
+    )
+    vtecs[prn_select] = vtec_values[prn_select]
+    return [
+        [
+            np.concatenate(
+                (
+                    vtecs[:, timeidx, hidx][~np.isnan(vtecs[:, timeidx, hidx])][
+                        :, np.newaxis
                     ],
-                    axis=0,
-                )
+                    dlons[:, timeidx, hidx][~np.isnan(vtecs[:, timeidx, hidx])][
+                        :, np.newaxis
+                    ],
+                    dlats[:, timeidx, hidx][~np.isnan(vtecs[:, timeidx, hidx])][
+                        :, np.newaxis
+                    ],
+                ),
+                axis=-1,
             )
-    return vtec_dlong_dlat_list
+            for hidx in range(Nheights)
+        ]
+        for timeidx in range(Ntimes)
+    ]
 
 
 def get_interpolated_tec(
@@ -310,30 +342,36 @@ def get_interpolated_tec(
     Parameters
     ----------
     input_data : list[list[np.ndarray]]
-      list (times) of list (heights) of array with vtec, dlongitude (deg), dlatitude (deg) of selected satellites-station combinations  
+      list (times) of list (heights) of array with vtec, dlongitude (deg), dlatitude (deg) of selected satellites-station combinations
 
     Returns
     -------
     np.ndarray
         partial integrated electron density at the piercepoints
-    """    
+    """
     fitted_density = np.zeros((len(input_data), len(input_data[0])))
     for timeidx, input_time in enumerate(input_data):
         for hidx, vtec_dlong_dlat in enumerate(input_time):
+            if not vtec_dlong_dlat.shape or vtec_dlong_dlat.shape[0] < 2:
+                print("not enough data for fitting")
+                continue
             A = np.ones_like(vtec_dlong_dlat)
             A[:, 1:] = vtec_dlong_dlat[:, 1:]
             # linear_fit
             w = 1.0 / np.linalg.norm(A[:, 1:], axis=1)  # weight with inverse distance
-            Aw = w[:, np.newaxis] * A
-            par = np.linalg.inv(Aw.T @ Aw) @ (Aw.T @ vtec_dlong_dlat[:, :1])
-            fitted_density[timeidx, hidx] = par[0] # We need the offset at the origin
+            # w/= np.sum(w)
+            w = w * np.eye(A.shape[0])
+            AwT = A.T @ w
+            par = np.linalg.inv(AwT @ A) @ (AwT @ vtec_dlong_dlat[:, :1])
+            fitted_density[timeidx, hidx] = par[0]  # We need the offset at the origin
     return fitted_density
+
+
 # TODO: Add error bars
 
 
 def _get_dcb_value(dcbdata, c1_str, c2_str, prn) -> float:
-    """Helper function to read dcb data from DCBData object
-    """    
+    """Helper function to read dcb data from DCBData object"""
     dcb = dcbdata.dcb
     dcbkeys = dcbdata.station_code_combination
     if f"{str(prn)}_{c1_str}_{c2_str}" in dcbkeys:
@@ -345,7 +383,11 @@ def _get_dcb_value(dcbdata, c1_str, c2_str, prn) -> float:
 
 
 def get_gnss_station_density(
-    gnss_data: GNSSData, dcb: DCBdata, ipp_target: IPP, profiles: np.ndarray, sat_pos_object
+    gnss_data: GNSSData,
+    dcb: DCBdata,
+    ipp_target: IPP,
+    profiles: np.ndarray,
+    sat_pos_object,
 ) -> list[list[np.ndarray]]:
     """For a given GNSS receiver get the bias corrected vtec data and distance in longitude and latitude to the desired target ipp
 
@@ -358,14 +400,18 @@ def get_gnss_station_density(
     ipp_target : IPP
         ionospheric piercepoints of the target
     profiles : np.ndarray
-        average normalized density profiles for all times 
+        average normalized density profiles for all times
 
     Returns
     -------
     list[list[np.ndarray]]
         list (times) of list (heights) of array with vtec, dlongitude (deg), dlatitude (deg) of selected satellites
-    """    
-    dcb_stat = _get_dcb_value(dcb, gnss_data.c1_str, gnss_data.c2_str, gnss_data.station)
+    """
+    dcb_stat = (
+        _get_dcb_value(dcb, gnss_data.c1_str, gnss_data.c2_str, gnss_data.station)
+        if gnss_data.has_dcb
+        else 0
+    )
     prns = sorted(gnss_data.gnss.keys())
     stec_values = []
     ipp_sat_stat = []
@@ -374,38 +420,43 @@ def get_gnss_station_density(
         axis=0,
     )  # nearest neighbour interpolation in time, TODO: correct gps_time to UTC
     for prn in prns:
-        sat_data = gnss_data.gnns[prn]
-        dcb_sat = _get_dcb_value(dcb, gnss_data.c1_str, gnss_data.c2_str, prn)
-        transmission_time = get_transmission_time(
-            sat_data.c2, gnss_data.times, dcb_sat=dcb_sat, dcb_stat=dcb_stat
+        try:
+            sat_data = gnss_data.gnss[prn]
+            dcb_sat = _get_dcb_value(dcb, gnss_data.c1_str, gnss_data.c2_str, prn)
+            transmission_time = get_transmission_time(
+                sat_data[:, 1], gnss_data.times, dcb_sat=dcb_sat, dcb_stat=dcb_stat
+            )
+            pseudo_stec = getpseudorange_tec(
+                sat_data[:, 0],  # c1 data
+                sat_data[:, 1],  # c2 data
+                dcb_sat=dcb_sat,
+                dcb_stat=dcb_stat,
+                constellation=gnss_data.constellation,
+            )
+            phase_stec = getphase_tec(
+                sat_data[:, 2], sat_data[:, 3], constellation=gnss_data.constellation
+            )
+            phase_stec = _get_phase_corrected(
+                phase_stec, pseudo_stec
+            )  # correct bias per cycle slip
+            sat_pos = get_sat_pos(sat_pos_object, transmission_time, prn)
+            ipp_sat_stat.append(
+                get_stat_sat_ipp(
+                    satpos=sat_pos,
+                    gnsspos=gnss_pos_dict[gnss_data.station],
+                    times=gnss_data.times,
+                    height_array=ipp_target.loc[0].height,
+                )
+            )
+            stec_values.append(phase_stec)
+        except:
+            print("Fail for", gnss_data.station, prn)
+    correction = (
+        get_gim_correction(
+            stec_data=stec_values, ipp_sat_stat=ipp_sat_stat, timestep=10
         )
-        pseudo_stec = getpseudorange_tec(
-            sat_data.c1,
-            sat_data.c2,
-            dcb_sat=dcb_sat,
-            dcb_stat=dcb_stat,
-            constellation=gnss_data.constellation,
-        )
-        phase_stec = getphase_tec(
-            sat_data.l1, sat_data.l2, constellation=gnss_data.constellation
-        )
-        phase_stec = _get_phase_corrected(
-            phase_stec, pseudo_stec
-        )  # correct bias per cycle slip
-        sat_pos = get_sat_pos(
-                sat_pos_object, transmission_time, prn
-        )
-        ipp_sat_stat.append(get_stat_sat_ipp(
-                satpos=sat_pos,
-                gnsspos=gnss_pos_dict[gnss_data.station],
-                times=gnss_data.times,
-                height_array=ipp_target.loc[0].height,
-        ) ) 
-        stec_values.append(phase_stec)
-    # correction probably needs to be per satellite constellation, this can be solved by creating a gnss_data object
-    # per constellation
-    correction = get_gim_correction(
-        stec_data=stec_values, ipp_sat_stat=ipp_sat_stat, timestep=10
+        if not gnss_data.has_dcb
+        else 0
     )
     # Now make a subselection in time, elevation and distance to ipp. returns approximate vtec,dlong and dlat list for every h x time combination
     return _get_distance_ipp(
@@ -420,7 +471,7 @@ def get_gnss_station_density(
 def get_ipp_density(
     ipp_target: IPP, gnss_data_list: list[GNSSData], dcb: DCBdata, sat_pos_object
 ) -> tec_data.ElectronDensity:
-    """Get the partial integrated electron density at the ipps 
+    """Get the partial integrated electron density at the ipps
 
     Parameters
     ----------
@@ -435,18 +486,28 @@ def get_ipp_density(
     -------
     tec_data.ElectronDensity
         partial integrated electron density at the piercepoints
-    """    
+    """
     profiles = get_profile(ipp_target)
     Ntimes = ipp_target.times.shape[0]
     Nheights = ipp_target.loc.shape[1]
-    all_data = [[[] for _ in range(Nheights)] for _ in range(Ntimes)] # Ntimes x Nheights
+    all_data = [
+        [[] for _ in range(Nheights)] for _ in range(Ntimes)
+    ]  # Ntimes x Nheights
     stec_gnss_data = {}
-    with ProcessPoolExecutor(max_workers=6) as executor:
+    with ProcessPoolExecutor(max_workers=8) as executor:
         # Submit all tasks
         future_to_station_constellation = {
-                executor.submit(get_gnss_station_density, gnss_data, dcb, ipp_target, profiles, sat_pos_object) : gnss_data.station+gnss_data.constellation
-                for gnss_data in gnss_data_list
-         }
+            executor.submit(
+                get_gnss_station_density,
+                gnss_data,
+                dcb,
+                ipp_target,
+                profiles,
+                sat_pos_object,
+            ): gnss_data.station
+            + gnss_data.constellation
+            for gnss_data in gnss_data_list
+        }
 
         # Collect results as they complete
         for future in as_completed(future_to_station_constellation):
@@ -456,16 +517,19 @@ def get_ipp_density(
                 stec_gnss_data[station] = result
             except Exception as e:
                 stec_gnss_data[station] = f"Error: {e}"
-    
-    for station,station_data in stec_gnss_data.items:
-        if  type(station_data) == str:
-            print ("error for", station, station_data)
+
+    for station, station_data in stec_gnss_data.items():
+        if type(station_data) == str:
+            print("error for", station, station_data)
             continue
         for itm in range(Ntimes):
             for hidx in range(Nheights):
-                all_data[itm][hidx].append(station_data[itm][hidx])        
+                all_data[itm][hidx].append(station_data[itm][hidx])
     for itm in range(Ntimes):
         for hidx in range(Nheights):
             all_data[itm][hidx] = np.concatenate(all_data[itm][hidx], axis=0)
     electron_density = get_interpolated_tec(all_data)
-    return tec_data.ElectronDensity(electron_density=electron_density, electron_density_error=np.zeros_like(electron_density))
+    return tec_data.ElectronDensity(
+        electron_density=electron_density,
+        electron_density_error=np.zeros_like(electron_density),
+    )

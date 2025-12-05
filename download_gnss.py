@@ -107,7 +107,7 @@ async def download_rinex_coro(
     # TODO: get naming format for dates and servers (like we do for ionex data)
     urls = []
     year = date.year
-    yy = date.year-2000
+    yy = date.year - 2000
     doy = date.timetuple().tm_yday
     server_list = [
         "https://cddis.nasa.gov/archive/gnss/data/daily/",
@@ -122,6 +122,7 @@ async def download_rinex_coro(
     for station in stations:
         fname = f"{station}_R_{year}{doy:03d}0000_01D_30S_MO.crx.gz"
         found = False
+        # TODO: the checking below is relatively slow, speed up (e.g. download page with all available stations and parse)
         for url in url_list:
             if check_url(f"{url}{fname}"):
                 urls.append(f"{url}{fname}")

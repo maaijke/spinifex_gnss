@@ -16,7 +16,7 @@ from gnss_geometry import get_sat_pos_object
 from typing import Any
 
 
-MIN_DISTANCE_SELECT = 1000 * u.km
+MIN_DISTANCE_SELECT = 800 * u.km
 
 
 def get_min_distance(ipp: IPP, gnss_pos: EarthLocation):
@@ -65,7 +65,7 @@ def get_electron_density_gnss(ipp: IPP):
         dcb = parse_dcb_sinex(download_dcb(date=day.to_datetime())[0])
         gnss_file_list = download_rinex(date=day.to_datetime(), stations=gnss_list)
         gnss_data_list = process_all_rinex_parallel(
-            gnss_file_list, times=ipp.times[indices], dcb=dcb
+            gnss_file_list, dcb=dcb
         )
         gnss_data_list = [i for i in gnss_data_list if i.is_valid]
         sp3_files = download_satpos_files(date=day.to_datetime())
