@@ -15,7 +15,7 @@ from spinifex.ionospheric.iri_density import get_profile
 from astropy.coordinates import EarthLocation
 from concurrent.futures import as_completed, ProcessPoolExecutor
 
-DISTANCE_KM_CUT = 500 #seems rather high
+DISTANCE_KM_CUT = 500 
 ELEVATION_CUT = 35
 
 
@@ -361,7 +361,7 @@ def get_interpolated_tec(
             A = np.ones_like(vtec_dlong_dlat)
             A[:, 1:] = vtec_dlong_dlat[:, 1:]
             # linear_fit
-            w = 1.0 / np.linalg.norm(A[:, 1:], axis=1)  # weight with inverse distance
+            w = 1.0 / np.linalg.norm(A[:, 1:], axis=1)**0.5  # weight with inverse distance
             # w/= np.sum(w)
             w = w * np.eye(A.shape[0])
             AwT = A.T @ w
