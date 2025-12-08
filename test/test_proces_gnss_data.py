@@ -22,19 +22,17 @@ from spinifex.geometry import get_ipp_from_skycoord
 from astropy.time import Time
 from astropy.coordinates import SkyCoord, EarthLocation
 
+datapath = Path("./data/")
 
 def get_test_data():
-    gnss_file = Path(
-        "/home/mevius/IONO/GPS/data/IJMU00NLD_R_20251770000_01D_30S_MO.crx.gz"
-    )
-    dcb_data = Path(
-        "/home/mevius/IONO/GPS/data/CAS0MGXRAP_20251770000_01D_01D_DCB.BSX.gz"
-    )
+    gnss_file = datapath / "IJMU00NLD_R_20251770000_01D_30S_MO.crx.gz"
+    dcb_data = datapath / "CAS0MGXRAP_20251770000_01D_01D_DCB.BSX.gz"
+    
     dcb = parse_dcb_sinex(dcb_data)
     gnss_data_list = get_gnss_data(gnss_file, dcb=dcb, station="IJMU00NLD")
     sp3_files = [
         Path(i)
-        for i in sorted(glob.glob("/home/mevius/IONO/GPS/data/*20251*0000*SP3.gz"))
+        for i in sorted(glob.glob(datapath.as_posix() + "/*20251*0000*SP3.gz"))
     ]
     sat_pos_object = get_sat_pos_object(sp3_files=sp3_files)
     return gnss_data_list, dcb, sat_pos_object

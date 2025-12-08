@@ -15,7 +15,7 @@ from spinifex.ionospheric.iri_density import get_profile
 from astropy.coordinates import EarthLocation
 from concurrent.futures import as_completed, ProcessPoolExecutor
 
-DISTANCE_KM_CUT = 500
+DISTANCE_KM_CUT = 500 #seems rather high
 ELEVATION_CUT = 35
 
 
@@ -304,7 +304,11 @@ def _get_distance_ipp(
         profiles * (stec_values[:, timeselect] / weighted_am)[..., np.newaxis]
     )  # prn x times x heights
     dlons = np.array(
-        [ipp.loc.lon.deg[timeselect] - ipp_target.loc.lon.deg for ipp in ipp_sat_stat]
+        [
+            np.cos(ipp_target.loc.lat.rad)
+            * (ipp.loc.lon.deg[timeselect] - ipp_target.loc.lon.deg)
+            for ipp in ipp_sat_stat
+        ]
     )
     dlats = np.array(
         [ipp.loc.lat.deg[timeselect] - ipp_target.loc.lat.deg for ipp in ipp_sat_stat]
@@ -361,7 +365,11 @@ def get_interpolated_tec(
             # w/= np.sum(w)
             w = w * np.eye(A.shape[0])
             AwT = A.T @ w
-            par = np.linalg.inv(AwT @ A) @ (AwT @ vtec_dlong_dlat[:, :1])
+            try:
+                par = np.linalg.inv(AwT @ A) @ (AwT @ vtec_dlong_dlat[:, :1])
+            except:
+                print("inverse fail", AwT.shape, w)
+                continue
             fitted_density[timeidx, hidx] = par[0]  # We need the offset at the origin
     return fitted_density
 
@@ -450,21 +458,25 @@ def get_gnss_station_density(
             stec_values.append(phase_stec)
         except:
             print("Fail for", gnss_data.station, prn)
-    correction = (
-        get_gim_correction(
-            stec_data=stec_values, ipp_sat_stat=ipp_sat_stat, timestep=10
-        )
-        if not gnss_data.has_dcb
-        else 0
+    correction = get_gim_correction(
+        stec_data=stec_values, ipp_sat_stat=ipp_sat_stat, timestep=10
     )
+    # if not gnss_data.has_dcb
+    # else 0
+    # )
     # Now make a subselection in time, elevation and distance to ipp. returns approximate vtec,dlong and dlat list for every h x time combination
-    return _get_distance_ipp(
+    result = _get_distance_ipp(
         stec_values=np.array(stec_values) + correction,
         ipp_sat_stat=ipp_sat_stat,
         ipp_target=ipp_target,
         timeselect=timeselect,
         profiles=profiles,
     )  # list of list of stec, airmass, dlong, dlat values per height and time of ipp_target
+    del gnss_data  # free some memory
+    del stec_values
+    del ipp_sat_stat
+
+    return result
 
 
 def get_ipp_density(
@@ -493,7 +505,7 @@ def get_ipp_density(
         [[] for _ in range(Nheights)] for _ in range(Ntimes)
     ]  # Ntimes x Nheights
     stec_gnss_data = {}
-    with ProcessPoolExecutor(max_workers=8) as executor:
+    with ProcessPoolExecutor(max_workers=6) as executor:
         # Submit all tasks
         future_to_station_constellation = {
             executor.submit(
@@ -528,6 +540,8 @@ def get_ipp_density(
         for hidx in range(Nheights):
             all_data[itm][hidx] = np.concatenate(all_data[itm][hidx], axis=0)
     electron_density = get_interpolated_tec(all_data)
+    del all_data
+    del stec_gnss_data
     return tec_data.ElectronDensity(
         electron_density=electron_density,
         electron_density_error=np.zeros_like(electron_density),

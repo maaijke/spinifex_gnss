@@ -235,7 +235,7 @@ def get_gnss_data(gnss_file: Path, dcb: dict[Any], station: str):
     return gnss_data_list
 
 
-def process_all_rinex_parallel(rinex_files, dcb: dict[Any], max_workers=8):
+def process_all_rinex_parallel(rinex_files, dcb: dict[Any], max_workers=6):
     """Run get_gnss_data in parallel and gather results."""
 
     results = []

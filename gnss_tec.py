@@ -16,7 +16,7 @@ from gnss_geometry import get_sat_pos_object
 from typing import Any
 
 
-MIN_DISTANCE_SELECT = 800 * u.km
+MIN_DISTANCE_SELECT = 1000 * u.km
 
 
 def get_min_distance(ipp: IPP, gnss_pos: EarthLocation):

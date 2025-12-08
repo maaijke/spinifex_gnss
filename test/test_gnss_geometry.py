@@ -6,8 +6,10 @@ import astropy.units as u
 import numpy as np
 from astropy.coordinates import EarthLocation
 
+datapath = Path("./data/")
+
 def test_get_sat_pos_object():
-    sp3_files = [Path(i) for i in sorted(glob.glob("/home/mevius/IONO/GPS/spinifex_gnss/data/*sp3.gz"))]
+    sp3_files = [Path(i) for i in sorted(glob.glob(datapath.as_posix() +  "/*sp3.gz"))]
     sat_pos_object = get_sat_pos_object(sp3_files = sp3_files)
     return sat_pos_object
 
