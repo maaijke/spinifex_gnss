@@ -113,11 +113,13 @@ async def download_rinex_coro(
         "https://cddis.nasa.gov/archive/gnss/data/daily/",
         "https://www.epncb.oma.be/pub/obs/",
         "https://webring.gm.ingv.it:44324/rinex/RING/",
+        "https://ga-gnss-data-rinex-v1.s3.amazonaws.com/index.html#public/daily/",
     ]
     url_list = [
         f"{server_list[0]}/{year}/{doy:03d}/{yy}d/",
         f"{server_list[1]}/{year}/{doy:03d}/",
         f"{server_list[2]}/{year}/{doy:03d}/",
+        f"{server_list[3]}/{year}/{doy:03d}/"
     ]
     for station in stations:
         fname = f"{station}_R_{year}{doy:03d}0000_01D_30S_MO.crx.gz"

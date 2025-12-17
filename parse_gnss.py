@@ -133,7 +133,7 @@ def _read_dcb_data(file_buffer):
                 to_seconds = 1e-9
             else:
                 to_seconds = 1
-            station = data["STATION"]
+            station = data["STATION"] if "STATION" in data.keys() else data["SITE"]
             cod1 = data["OBS1"]
             cod2 = data["OBS2"]
             bias = float(data["ESTIMATED_VALUE"])
