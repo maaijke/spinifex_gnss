@@ -102,3 +102,27 @@ for itm in range(0,1440,10):
     plt.scatter(lonlat_s16[:,itm,0],lonlat_s16[:,itm,1],s=50,c='g')
     plt.scatter(lonlat_e16[:,itm,0],lonlat_e16[:,itm,1],s=50,c='m')    
     plt.pause(.1)
+
+
+with open("lonlat_ska.txt","w") as myf:
+    for itm, time in enumerate(times):
+        for gnss_pos in lonlat[:,itm]:
+            if gnss_pos[0]==0 and gnss_pos[1]==0:
+                continue
+            print(time.isot, gnss_pos[0], gnss_pos[1], 0, file=myf)
+        for ska_pos in lonlat_ska[:, itm]:
+            if ska_pos[0]==0 and ska_pos[1]==0:
+                continue
+            print(time.isot, ska_pos[0], ska_pos[1], 1, file=myf)
+        for ska_pos in lonlat_n16[:, itm]:
+            if ska_pos[0]==0 and ska_pos[1]==0:
+                continue
+            print(time.isot, ska_pos[0], ska_pos[1], 2, file=myf)
+        for ska_pos in lonlat_s16[:, itm]:
+            if ska_pos[0]==0 and ska_pos[1]==0:
+                continue
+            print(time.isot, ska_pos[0], ska_pos[1], 3, file=myf)
+        for ska_pos in lonlat_e16[:, itm]:
+            if ska_pos[0]==0 and ska_pos[1]==0:
+                continue
+            print(time.isot, ska_pos[0], ska_pos[1], 4, file=myf)
