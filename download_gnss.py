@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from spinifex.download import download_or_copy_url
 from spinifex.asyncio_wrapper import sync_wrapper
 from pathlib import Path
+from bs4 import BeautifulSoup
 import requests
 
 
@@ -91,13 +92,29 @@ async def download_dcb_coro(
     return await asyncio.gather(dcb)
 
 
-def check_url(url: str):
+def check_url(url_list: list[str]):
     """
     Check if a given url exists
     """
-    response = requests.head(url)
-    return response.status_code == 200
+    files = set()
+    for url in url_list:
+        try:
+            response = requests.get(url, timeout=30)
+            response.raise_for_status()
+            
+            # Parse HTML directory listing
+            soup = BeautifulSoup(response.text, 'html.parser')
 
+            
+            # Find all links in the directory
+            for link in soup.find_all('a'):
+                href = link.get('href')
+                if href and not href.startswith(('?', '/', 'http')):
+                    files.add(f"{url}{href}")
+        except Exception as e:
+            print(f"Error parsing {url}: {e}")
+            continue
+    return files
 
 async def download_rinex_coro(
     date: datetime,
@@ -121,12 +138,15 @@ async def download_rinex_coro(
         f"{server_list[2]}/{year}/{doy:03d}/",
         f"{server_list[3]}/{year}/{doy:03d}/"
     ]
+    #get and parse directory listing
+    print("checking", url_list)
+    files_per_url = check_url(url_list)
     for station in stations:
         fname = f"{station}_R_{year}{doy:03d}0000_01D_30S_MO.crx.gz"
         found = False
         # TODO: the checking below is relatively slow, speed up (e.g. download page with all available stations and parse)
         for url in url_list:
-            if check_url(f"{url}{fname}"):
+            if f"{url}{fname}" in files_per_url:
                 urls.append(f"{url}{fname}")
                 found = True
                 break

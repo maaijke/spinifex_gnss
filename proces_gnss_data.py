@@ -10,12 +10,13 @@ from spinifex.ionospheric.ionex_manipulation import (
     _download_ionex,
     read_ionex,
     interpolate_ionex,
+    IonexData,
 )
 from spinifex.ionospheric.iri_density import get_profile
 from astropy.coordinates import EarthLocation
 from concurrent.futures import as_completed, ProcessPoolExecutor
 
-DISTANCE_KM_CUT = 500 
+DISTANCE_KM_CUT = 500
 ELEVATION_CUT = 35
 
 
@@ -181,6 +182,53 @@ def _get_phase_corrected(phase_tec: np.ndarray, pseudo_tec: np.ndarray) -> np.nd
         seg_idx = np.where(cycle_slips == seg)
 
         phase_bias[seg_idx] = np.nanmean(pseudo_tec[seg_idx] - phase_tec[seg_idx])
+    return phase_tec + phase_bias
+
+
+def _get_gim_phase_corrected(
+    phase_tec: np.ndarray, ipp_sat_stat: IPP, timeselect: np.ndarray, ionex: IonexData
+) -> np.ndarray:
+    """correct carrier phase calculated stec using gim stec
+
+    Parameters
+    ----------
+    phase_tec : np.ndarray
+        stec calculated from carrier phases
+    ipp_sat_stat: ipps of the LOS
+    timeselect: indices of times of interest, only correct data that is interesting
+
+    Returns
+    -------
+    np.ndarray
+        bias corrected stec values
+    """
+    cycle_slips = _get_cycle_slips(phase_tec=phase_tec)
+    phase_bias = np.zeros_like(phase_tec)
+    default_options = tec_data.IonexOptions()
+    h_idx = np.argmin(
+        np.abs(
+            ipp_sat_stat.loc[0].height.to(u.km).value
+            - default_options.height.to(u.km).value
+        )
+    )
+    for seg in np.unique(cycle_slips):
+        seg_idx = np.where(cycle_slips == seg)
+        if np.intersect1d(seg_idx, timeselect).size == 0:
+            # only correct interesting times
+            continue
+        ipp = ipp_sat_stat.loc[:, h_idx][seg_idx]
+        elevation = ipp_sat_stat.altaz.alt.deg[seg_idx]
+        gim_tec = interpolate_ionex(
+            ionex,
+            ipp.lon.deg,
+            ipp.lat.deg,
+            ipp_sat_stat.times.mjd[seg_idx],
+            apply_earth_rotation=default_options.apply_earth_rotation,
+        )
+        phase_bias[seg_idx] = np.nanmean(
+            gim_tec[elevation > ELEVATION_CUT]
+            - phase_tec[seg_idx][elevation > ELEVATION_CUT]
+        )
     return phase_tec + phase_bias
 
 
@@ -361,7 +409,9 @@ def get_interpolated_tec(
             A = np.ones_like(vtec_dlong_dlat)
             A[:, 1:] = vtec_dlong_dlat[:, 1:]
             # linear_fit
-            w = 1.0 / np.linalg.norm(A[:, 1:], axis=1)**0.5  # weight with inverse distance
+            w = (
+                1.0 / np.linalg.norm(A[:, 1:], axis=1) ** 0.5
+            )  # weight with inverse distance
             # w/= np.sum(w)
             w = w * np.eye(A.shape[0])
             AwT = A.T @ w
@@ -387,6 +437,84 @@ def _get_dcb_value(dcbdata, c1_str, c2_str, prn) -> float:
     else:
         # print warning
         return 0.0
+
+
+def get_gnss_station_density_new_method(
+    gnss_data: GNSSData,
+    dcb: DCBdata,
+    ipp_target: IPP,
+    profiles: np.ndarray,
+    sat_pos_object,
+) -> list[list[np.ndarray]]:
+    """For a given GNSS receiver get the bias corrected vtec data and distance in longitude and latitude to the desired target ipp
+
+    Parameters
+    ----------
+    gnss_data : GNSSData
+        receiver data and times (single constellation)
+    dcb : DCBdata
+        bias data
+    ipp_target : IPP
+        ionospheric piercepoints of the target
+    profiles : np.ndarray
+        average normalized density profiles for all times
+
+    Returns
+    -------
+    list[list[np.ndarray]]
+        list (times) of list (heights) of array with vtec, dlongitude (deg), dlatitude (deg) of selected satellites
+    """
+    prns = sorted(gnss_data.gnss.keys())
+    stec_values = []
+    ipp_sat_stat = []
+    timeselect = np.argmin(
+        np.abs(ipp_target.times.mjd - gnss_data.times.mjd[:, np.newaxis]),
+        axis=0,
+    )  # nearest neighbour interpolation in time, TODO: correct gps_time to UTC
+    # read ionex object for all times
+    default_options = tec_data.IonexOptions()
+    sorted_ionex_paths = _download_ionex(
+        times=ipp_target.times, options=default_options
+    )
+    ionex = read_ionex(sorted_ionex_paths[0], None, options=default_options)
+    for prn in prns:
+        try:
+            sat_data = gnss_data.gnss[prn]
+            transmission_time = get_transmission_time(
+                sat_data[:, 1], gnss_data.times, dcb_sat=0, dcb_stat=0
+            )
+            phase_stec = getphase_tec(
+                sat_data[:, 2], sat_data[:, 3], constellation=gnss_data.constellation
+            )
+            # correct phase_tec with gim
+            # first get sat positions for timeselect
+            sat_pos = get_sat_pos(sat_pos_object, transmission_time, prn)
+            ipp_sat_stat.append(
+                get_stat_sat_ipp(
+                    satpos=sat_pos,
+                    gnsspos=gnss_pos_dict[gnss_data.station],
+                    times=gnss_data.times,
+                    height_array=ipp_target.loc[0].height,
+                )
+            )
+            stec_values.append(
+                _get_gim_phase_corrected(phase_stec, ipp_sat_stat, timeselect, ionex)
+            )
+        except:
+            print("Fail for", gnss_data.station, prn)
+    correction = 0
+    result = _get_distance_ipp(
+        stec_values=np.array(stec_values) + correction,
+        ipp_sat_stat=ipp_sat_stat,
+        ipp_target=ipp_target,
+        timeselect=timeselect,
+        profiles=profiles,
+    )  # list of list of stec, airmass, dlong, dlat values per height and time of ipp_target
+    del gnss_data  # free some memory
+    del stec_values
+    del ipp_sat_stat
+
+    return result
 
 
 def get_gnss_station_density(
@@ -509,7 +637,7 @@ def get_ipp_density(
         # Submit all tasks
         future_to_station_constellation = {
             executor.submit(
-                get_gnss_station_density,
+                get_gnss_station_density_new_method,
                 gnss_data,
                 dcb,
                 ipp_target,

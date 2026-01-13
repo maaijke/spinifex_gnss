@@ -17,7 +17,7 @@ from typing import Any
 
 
 MIN_DISTANCE_SELECT = 1000 * u.km
-
+DEFAULT_IONO_HEIGHT = 450 * u.km
 
 def get_min_distance(ipp: IPP, gnss_pos: EarthLocation):
     return (
@@ -33,7 +33,7 @@ def get_min_distance(ipp: IPP, gnss_pos: EarthLocation):
 
 
 def select_gnss_stations(ipp_location: EarthLocation):
-    hidx = np.argmin(np.abs(ipp_location[0].height - 300 * u.km))
+    hidx = np.argmin(np.abs(ipp_location[0].height - DEFAULT_IONO_HEIGHT))
     ipp_earth = EarthLocation(
         lon=ipp_location[:, hidx].lon, lat=ipp_location[:, hidx].lat, height=0 * u.m
     )
