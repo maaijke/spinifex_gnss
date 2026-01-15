@@ -152,9 +152,12 @@ def _read_dcb_data(file_buffer):
     return DCBdata(dcb=dcb, station_code_combination=station_code_combination)
 
 
-def get_gnss_data(gnss_file: Path, dcb: dict[Any], station: str):
+def get_gnss_data(gnss_file: list[Path], dcb: dict[Any], station: str):
     try:
-        rinex_data = get_rinex_data(gnss_file)
+        rinex_data = get_rinex_data(
+            gnss_file[0]
+        )  # we need toget data for two consecutive days
+        rinex_data_next_day = get_rinex_data(gnss_file[1])
     except:
         print(f"rinex data failed for station {station}")
         return []
@@ -211,18 +214,31 @@ def get_gnss_data(gnss_file: Path, dcb: dict[Any], station: str):
             data = {}
             for key, rxdata in rinex_data.data.items():
                 if key[0] == constellation:
-                    data[key] = rxdata[:, (idx_c1, idx_c2, idx_l1, idx_l2)]
+                    data[key] = np.concatenate(
+                        (
+                            rxdata[:, (idx_c1, idx_c2, idx_l1, idx_l2)],
+                            rinex_data_next_day.data[key][
+                                :, (idx_c1, idx_c2, idx_l1, idx_l2)
+                            ],
+                        ),
+                        axis=0,
+                    )
             gnss_data_list.append(
                 GNSSData(
                     c1_str=c1_str,
                     c2_str=c2_str,
                     l1_str=l1_str,
                     l2_str=l2_str,
-                    gnss=data,
+                    gnss=data,  # cncatenate data of two  days
                     station=station,
                     has_dcb=has_dcb,
                     is_valid=True,
-                    times=rinex_data.times,
+                    times=Time(
+                        np.concatenate(
+                            (rinex_data.times.mjd, rinex_data_next_day.times.mjd)
+                        ),
+                        format="mjd",
+                    ),  # concatenate times of two days
                     constellation=constellation,
                 )
             )
@@ -241,7 +257,7 @@ def process_all_rinex_parallel(rinex_files, dcb: dict[Any], max_workers=6):
     results = []
     with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
         futures = {
-            executor.submit(get_gnss_data, rf, dcb, rf.stem[:9]): rf
+            executor.submit(get_gnss_data, rf, dcb, rf[0].stem[:9]): rf
             for rf in rinex_files
         }
         for fut in concurrent.futures.as_completed(futures):

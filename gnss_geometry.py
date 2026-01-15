@@ -126,7 +126,7 @@ def get_stat_sat_ipp(
     satpos: EarthLocation,
     gnsspos: EarthLocation,
     times: Time,
-    height_array: u.Quantity = np.array([350]) * u.km,
+    height_array: u.Quantity = np.array([450]) * u.km,
 ) -> IPP:
     """Get ionospheric pierce point of satellite receiever combination
 
@@ -139,7 +139,7 @@ def get_stat_sat_ipp(
     times : Time
         times # note should be in gps time
     height_array : u.Quantity, optional
-        altitudes of ionospheric piercepoints, by default np.array([350])*u.km
+        altitudes of ionospheric piercepoints, by default np.array([450])*u.km
 
     Returns
     -------

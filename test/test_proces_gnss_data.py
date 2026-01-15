@@ -92,7 +92,7 @@ def test_get_gim_correction():
             phase_stec = getphase_tec(
                 sat_data[:, 2], sat_data[:, 3], constellation=gnss_data.constellation
             )
-            phase_stec = _get_phase_corrected(
+            phase_stec, phase_std = _get_phase_corrected(
                 phase_stec, pseudo_stec
             )  # correct bias per cycle slip
             sat_pos = get_sat_pos(sat_pos_object, transmission_time, prn)
@@ -109,7 +109,7 @@ def test_get_gim_correction():
                     * u.km,
                 )
             )
-            stec_values.append(phase_stec)
+            stec_values.append(phase_stec, phase_std)
         except:
             print("Fail for", prn)
     # correction probably needs to be per satellite constellation, this can be solved by creating a gnss_data object

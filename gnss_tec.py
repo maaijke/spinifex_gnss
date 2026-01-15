@@ -63,7 +63,13 @@ def get_electron_density_gnss(ipp: IPP):
         selected_ipp = _select_times_from_ipp(ipp, indices)
         gnss_list = select_gnss_stations(selected_ipp.loc)
         dcb = parse_dcb_sinex(download_dcb(date=day.to_datetime())[0])
-        gnss_file_list = download_rinex(date=day.to_datetime(), stations=gnss_list)
+        gnss_file_list = sorted(download_rinex(date=day.to_datetime(), stations=gnss_list))
+        st_list = sorted([i.name[:9] for i in gnss_file_list]) # the stations for which data was found
+        gnss_file_list_next_day = sorted(download_rinex(date=(day + 1*u.day).to_datetime(), stations=st_list))
+        st_list2 = sorted([i.name[:9] for i in gnss_file_list_next_day]) # the stations for which data was found
+        if not st_list==st_list2:
+            gnss_file_list = sorted([i for i in gnss_file_list if i.name[:9] in st_list2])
+        gnss_file_list = [(i,j) for (i,j) in zip(gnss_file_list,gnss_file_list_next_day)]# pairs of files
         gnss_data_list = process_all_rinex_parallel(
             gnss_file_list, dcb=dcb
         )
@@ -82,8 +88,8 @@ def get_electron_density_gnss(ipp: IPP):
             )
         )
     return ElectronDensity(
-        electron_density=np.concatenate([i.electron_density for i in all_data], axis=0),
+        electron_density=np.concatenate([i[0].electron_density for i in all_data], axis=0),
         electron_density_error=np.concatenate(
-            [i.electron_density_error for i in all_data], axis=0
+            [i[0].electron_density_error for i in all_data], axis=0
         ),
-    )
+    ), [i[1] for i in all_data]
