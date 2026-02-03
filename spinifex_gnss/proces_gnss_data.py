@@ -735,7 +735,7 @@ def get_ipp_density(
         [[] for _ in range(Nheights)] for _ in range(Ntimes)
     ]  # Ntimes x Nheights
     stec_gnss_data = {}
-    with ProcessPoolExecutor(max_workers=6) as executor:
+    with ProcessPoolExecutor(max_workers=20) as executor:
         # Submit all tasks
         future_to_station_constellation = {
             executor.submit(
