@@ -15,7 +15,7 @@ def get_gps_week(date: datetime):
 
 async def _download_satpos_files_coro(
     date: datetime,
-    url: str = "ftp.gfz-potsdam.de/GNSS/products/mgex/",
+    url: str = "ftp://ftp.gfz-potsdam.de/GNSS/products/mgex/",
     datapath: Path = Path("../../GPS/data/"),
 ) -> list[Path]:
 
@@ -47,7 +47,7 @@ async def _download_satpos_files_coro(
 
 def download_satpos_files(
     date: datetime,
-    url: str = "ftp.gfz-potsdam.de/GNSS/products/mgex/",
+    url: str = "ftp://ftp.gfz-potsdam.de/GNSS/products/mgex/",
     datapath: Path = Path("../../GPS/data/"),
 ) -> list[Path]:
     """Get the sp3 position files and corresponding clock errors for a specific date, the day before and the day after for interpolation purposes
