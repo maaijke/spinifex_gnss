@@ -58,11 +58,13 @@ version.source = "vcs"
 build.hooks.vcs.version-file = "spinifex_gnss/_version.py"
 
 [tool.hatch.build.targets.wheel]
+packages = ["spinifex_gnss"]
 include = [
   "spinifex_gnss/data/**"
 ]
 
 [tool.hatch.build.targets.sdist]
+packages = ["spinifex_gnss"]
 include = [
   "spinifex_gnss/data/**"
 ]
