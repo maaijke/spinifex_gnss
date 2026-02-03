@@ -1,8 +1,8 @@
-from parse_gnss import DCBdata, GNSSData
+from spinifex_gnss.parse_gnss import DCBdata, GNSSData
 from astropy.time import Time
 import numpy as np
 from spinifex.geometry import IPP
-from gnss_geometry import get_stat_sat_ipp, get_sat_pos
+from spinifex_gnss.gnss_geometry import get_stat_sat_ipp, get_sat_pos
 from astropy.constants import c as speed_light
 import astropy.units as u
 from spinifex.ionospheric import get_density_ionex_single_layer, tec_data

@@ -6,13 +6,13 @@ from astropy.coordinates import EarthLocation
 from spinifex.geometry import IPP
 from spinifex.times import get_unique_days, get_indexlist_unique_days
 from spinifex.ionospheric.tec_data import ElectronDensity
-from download_gnss import download_dcb, download_rinex, download_satpos_files
-from parse_gnss import (
+from spinifex_gnss.download_gnss import download_dcb, download_rinex, download_satpos_files
+from spinifex_gnss.parse_gnss import (
     parse_dcb_sinex,
     process_all_rinex_parallel,
 )
-from proces_gnss_data import gnss_pos_dict, get_ipp_density
-from gnss_geometry import get_sat_pos_object
+from spinifex_gnss.proces_gnss_data import gnss_pos_dict, get_ipp_density
+from spinifex_gnss.gnss_geometry import get_sat_pos_object
 from typing import Any
 
 

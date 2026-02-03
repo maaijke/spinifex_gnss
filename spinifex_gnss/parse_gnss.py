@@ -7,7 +7,7 @@ import astropy.units as u
 from typing import NamedTuple, Any, TextIO
 import concurrent.futures
 from datetime import datetime
-from parse_rinex import get_rinex_data, RinexData
+from spinifex_gnss.parse_rinex import get_rinex_data, RinexData
 
 
 # ------------------------------------------------------------
