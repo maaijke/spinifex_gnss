@@ -15,17 +15,24 @@ from spinifex.ionospheric.ionex_manipulation import (
 from spinifex.ionospheric.iri_density import get_profile
 from astropy.coordinates import EarthLocation
 from concurrent.futures import as_completed, ProcessPoolExecutor
+from importlib import resources
+
 
 DISTANCE_KM_CUT = 300
 NDIST_POINTS = 30
 ELEVATION_CUT = 20
 INTERPOLATION_ORDER = 2
 
-euref_station_file = "data/data_euref_pos.ssc2"
-gnss_station_file = "data/data_gnss_pos.txt"
+gnss_station_file = "data_gnss_pos.txt"
 # TODO: get more gnss stations/databases
 gnss_pos_dict = {}
-with open(gnss_station_file) as myf:
+def load_standard_data():
+    return (
+        resources.files("your_package.data")
+        .joinpath("standard_data.csv")
+        .read_text()
+    )
+with open(resources.files("spinifex_gnss.data").joinpath(gnss_station_file)) as myf:
     for line in myf:
         pos = [float(i) for i in line.strip().split()[1:]]
         gnss_pos_dict[line[:9]] = EarthLocation.from_geocentric(*pos, unit=u.m)

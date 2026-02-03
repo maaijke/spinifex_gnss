@@ -2,7 +2,6 @@
 requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
-
 [project]
 name = "spinifex_gnss"
 authors = [
@@ -58,6 +57,15 @@ dev = ["pytest >=6", "pytest-cov >=3", "tox-uv", "pre-commit", "ruff", "mypy", "
 version.source = "vcs"
 build.hooks.vcs.version-file = "spinifex_gnss/_version.py"
 
+[tool.hatch.build.targets.wheel]
+include = [
+  "spinifex_gnss/data/**"
+]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "spinifex_gnss/data/**"
+]
 
 [[tool.mypy.overrides]]
 module = "spinifex_gnss.*"
