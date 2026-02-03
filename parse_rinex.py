@@ -118,3 +118,6 @@ def get_rinex_data(fname: Path)->RinexData:
             alldata[tm_idx] = dt
         newdata[prn] = alldata
     return RinexData(header=header, times=Time(all_times, format="mjd"), data=newdata)
+
+
+#TODO: add RNX2 parser

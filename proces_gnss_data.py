@@ -16,10 +16,10 @@ from spinifex.ionospheric.iri_density import get_profile
 from astropy.coordinates import EarthLocation
 from concurrent.futures import as_completed, ProcessPoolExecutor
 
-DISTANCE_KM_CUT = 500
+DISTANCE_KM_CUT = 300
 NDIST_POINTS = 30
-ELEVATION_CUT = 35
-
+ELEVATION_CUT = 20
+INTERPOLATION_ORDER = 2
 
 euref_station_file = "data/data_euref_pos.ssc2"
 gnss_station_file = "data/data_gnss_pos.txt"
@@ -451,11 +451,20 @@ def get_interpolated_tec(
                 dist, min(NDIST_POINTS, dist.shape[0] - 1), axis=0
             )[:NDIST_POINTS]
             dist_select[nearest_indices] = True
-            A = np.ones_like(vtec_dlong_dlat[dist_select][:, 1:])
+            A = np.ones(
+                vtec_dlong_dlat[dist_select].shape[:1]
+                + (((INTERPOLATION_ORDER) ** 2 + INTERPOLATION_ORDER) // 2,),
+                dtype=float,
+            )
             weight = (
                 1.0 / vtec_dlong_dlat[dist_select][:, 1]
             )  # inverse variance weights
-            A[:, 1:] = vtec_dlong_dlat[dist_select][:, 2:]
+            idx=0
+            for ilon in range(0,INTERPOLATION_ORDER):
+                for ilat in range(0,INTERPOLATION_ORDER-ilon):
+                    if idx>0:
+                        A[:, idx] = vtec_dlong_dlat[dist_select][:, 2]**ilon * vtec_dlong_dlat[dist_select][:, 3]**ilat
+                    idx+=1
             # linear_fit
             w = (
                 1.0
@@ -546,7 +555,10 @@ def get_gnss_station_density_new_method(
         * len(sorted_ionex_paths)
     )
     ionex = read_ionex(
-        sorted_ionex_paths[0], sorted_next_day_paths[0], options=default_options, concatenate=True
+        sorted_ionex_paths[0],
+        sorted_next_day_paths[0],
+        options=default_options,
+        concatenate=True,
     )
     # also get data of second day for gim correction
     for prn in prns:
@@ -753,10 +765,8 @@ def get_ipp_density(
     electron_density = get_interpolated_tec(all_data)
     # del all_data
     del stec_gnss_data
-    return (
-        tec_data.ElectronDensity(
-            electron_density=electron_density,
-            electron_density_error=np.zeros_like(electron_density),
-        ),
-        all_data,
+    del all_data
+    return tec_data.ElectronDensity(
+        electron_density=electron_density,
+        electron_density_error=np.zeros_like(electron_density),
     )

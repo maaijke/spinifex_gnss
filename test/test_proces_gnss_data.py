@@ -3,13 +3,14 @@ from proces_gnss_data import (
     _get_dcb_value,
     _get_phase_corrected,
     get_gim_correction,
+    _get_gim_phase_corrected,
     getphase_tec,
     getpseudorange_tec,
     _get_cycle_slips,
     get_transmission_time,
     gnss_pos_dict,
     get_interpolated_tec,
-    get_ipp_density
+    get_ipp_density,
 )
 
 from parse_gnss import parse_dcb_sinex, get_gnss_data
@@ -24,15 +25,15 @@ from astropy.coordinates import SkyCoord, EarthLocation
 
 datapath = Path("./data/")
 
+
 def get_test_data():
     gnss_file = datapath / "IJMU00NLD_R_20251770000_01D_30S_MO.crx.gz"
     dcb_data = datapath / "CAS0MGXRAP_20251770000_01D_01D_DCB.BSX.gz"
-    
+
     dcb = parse_dcb_sinex(dcb_data)
     gnss_data_list = get_gnss_data(gnss_file, dcb=dcb, station="IJMU00NLD")
     sp3_files = [
-        Path(i)
-        for i in sorted(glob.glob(datapath.as_posix() + "/*20251*0000*SP3.gz"))
+        Path(i) for i in sorted(glob.glob(datapath.as_posix() + "/*20251*0000*SP3.gz"))
     ]
     sat_pos_object = get_sat_pos_object(sp3_files=sp3_files)
     return gnss_data_list, dcb, sat_pos_object
@@ -40,7 +41,8 @@ def get_test_data():
 
 def get_test_data_single_constellation():
     gnss_data_list, dcb, sat_pos_object = get_test_data()
-    return [i for i in gnss_data_list if i.constellation=="G"][0], dcb, sat_pos_object
+    return [i for i in gnss_data_list if i.constellation == "G"][0], dcb, sat_pos_object
+
 
 def test_getpsuedorange_tec():
     gnss_data, _, _ = get_test_data_single_constellation()
@@ -119,6 +121,61 @@ def test_get_gim_correction():
     )
 
 
+def get_test_data_wsrt():
+    gnss_file = [
+        datapath / "WSRT00NLD_R_20241690000_01D_30S_MO.crx.gz",
+        datapath / "WSRT00NLD_R_20241700000_01D_30S_MO.crx.gz",
+    ]
+    dcb_data = datapath / "CAS0MGXRAP_20241690000_01D_01D_DCB.BSX.gz"
+
+    dcb = parse_dcb_sinex(dcb_data)
+    gnss_data_list = get_gnss_data(gnss_file, dcb=dcb, station="WSRT00NLD")
+    sp3_files = [
+        Path(i)
+        for i in sorted(glob.glob(datapath.as_posix() + "/GBM*2024*0000*SP3.gz"))
+    ]
+    sat_pos_object = get_sat_pos_object(sp3_files=sp3_files)
+    return gnss_data_list, dcb, sat_pos_object
+
+
+def test_get_carrier_phase():
+    gnss_data_list, dcb, sat_pos_object = get_test_data_wsrt()
+    data = {}
+    for gnss_data in gnss_data_list:
+        if not gnss_data.is_valid:
+            continue
+        prns = sorted(gnss_data.gnss.keys())
+        for prn in prns:
+            try:
+                sat_data = gnss_data.gnss[prn]
+                transmission_time = get_transmission_time(
+                    sat_data[:, 1], gnss_data.times, dcb_sat=0, dcb_stat=0
+                )
+                sat_pos = get_sat_pos(sat_pos_object, transmission_time, prn)
+                ipp_sat_stat = get_stat_sat_ipp(
+                    satpos=sat_pos,
+                    gnsspos=gnss_pos_dict[gnss_data.station],
+                    times=gnss_data.times,
+                    height_array=np.array(
+                        [
+                            350,
+                        ]
+                    )
+                    * u.km,
+                )
+
+                phase_stec = getphase_tec(
+                    sat_data[:, 2],
+                    sat_data[:, 3],
+                    constellation=gnss_data.constellation,
+                )
+                slips = _get_cycle_slips(phase_stec)
+                data[prn] = [phase_stec, slips]
+            except:
+                continue
+    return data
+
+
 def test_get_gnss_station_density():
     gnss_data, dcb, sat_pos_object = get_test_data_single_constellation()
     times = Time("2025-06-26T12:05:00") + np.arange(3) * 13 * u.min
@@ -143,12 +200,13 @@ def test_get_gnss_station_density():
 
 
 def test_get_interpolated_tec():
-    input_data = np.zeros((4,3))
-    input_data[0] = np.array((10,1,1))
-    input_data[1] = np.array((8,1,-1))
-    input_data[2] = np.array((5,-1.5,-1.1))
-    input_data[3] = np.array((9,-0.5,1))
+    input_data = np.zeros((4, 3))
+    input_data[0] = np.array((10, 1, 1))
+    input_data[1] = np.array((8, 1, -1))
+    input_data[2] = np.array((5, -1.5, -1.1))
+    input_data[3] = np.array((9, -0.5, 1))
     return get_interpolated_tec([[input_data]])
+
 
 def test_get_ipp_density():
     gnss_data_list, dcb, sat_pos_object = get_test_data()
@@ -164,4 +222,9 @@ def test_get_ipp_density():
         loc=station_pos,
         height_array=height_array,
     )
-    return get_ipp_density(ipp_target=ipp, gnss_data_list = gnss_data_list, dcb=dcb, sat_pos_object=sat_pos_object)
+    return get_ipp_density(
+        ipp_target=ipp,
+        gnss_data_list=gnss_data_list,
+        dcb=dcb,
+        sat_pos_object=sat_pos_object,
+    )

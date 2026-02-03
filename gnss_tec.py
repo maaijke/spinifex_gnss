@@ -88,8 +88,8 @@ def get_electron_density_gnss(ipp: IPP):
             )
         )
     return ElectronDensity(
-        electron_density=np.concatenate([i[0].electron_density for i in all_data], axis=0),
+        electron_density=np.concatenate([i.electron_density for i in all_data], axis=0),
         electron_density_error=np.concatenate(
-            [i[0].electron_density_error for i in all_data], axis=0
+            [i.electron_density_error for i in all_data], axis=0
         ),
-    ), [i[1] for i in all_data]
+    )

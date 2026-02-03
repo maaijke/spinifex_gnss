@@ -15,7 +15,7 @@ def get_gps_week(date: datetime):
 
 async def _download_satpos_files_coro(
     date: datetime,
-    url: str = "https://cddis.nasa.gov/archive/gnss/products/",
+    url: str = "ftp.gfz-potsdam.de/GNSS/products/mgex/",
     datapath: Path = Path("/home/mevius/IONO/GPS/data/"),
 ) -> list[Path]:
 
@@ -26,15 +26,15 @@ async def _download_satpos_files_coro(
     yesterweek, _ = get_gps_week(yesterday)
     tomorrowweek, _ = get_gps_week(tomorrow)
     sp3_names.append(
-        f"{url}{yesterweek}/GFZ0OPSFIN_{yesterday.year}{yesterday.timetuple().tm_yday:03d}0000_01D_05M_ORB.SP3.gz"
+        f"{url}{yesterweek}_IGS20/GBM0MGXRAP_{yesterday.year}{yesterday.timetuple().tm_yday:03d}0000_01D_05M_ORB.SP3.gz"
     )
     sp3_names.append(
-        f"{url}{gpsweek}/GFZ0OPSFIN_{date.year}{date.timetuple().tm_yday:03d}0000_01D_05M_ORB.SP3.gz"
+        f"{url}{gpsweek}_IGS20/GBM0MGXRAP_{date.year}{date.timetuple().tm_yday:03d}0000_01D_05M_ORB.SP3.gz"
     )
     sp3_names.append(
-        f"{url}{tomorrowweek}/GFZ0OPSFIN_{tomorrow.year}{tomorrow.timetuple().tm_yday:03d}0000_01D_05M_ORB.SP3.gz"
+        f"{url}{tomorrowweek}_IGS20/GBM0MGXRAP_{tomorrow.year}{tomorrow.timetuple().tm_yday:03d}0000_01D_05M_ORB.SP3.gz"
     )
-    clk_name = f"{url}{gpsweek}/GFZ0OPSFIN_{date.year}{date.timetuple().tm_yday:03d}0000_01D_30S_CLK.CLK.gz"
+    clk_name = f"{url}{gpsweek}_IGS20/GBM0MGXRAP_{date.year}{date.timetuple().tm_yday:03d}0000_01D_30S_CLK.CLK.gz"
     sp3_names.append(clk_name)
     coros = []
     for url in sp3_names:
@@ -43,9 +43,11 @@ async def _download_satpos_files_coro(
     return await asyncio.gather(*coros)
 
 
+
+
 def download_satpos_files(
     date: datetime,
-    url: str = "https://cddis.nasa.gov/archive/gnss/products/",
+    url: str = "ftp.gfz-potsdam.de/GNSS/products/mgex/",
     datapath: Path = Path("/home/mevius/IONO/GPS/data/"),
 ) -> list[Path]:
     """Get the sp3 position files and corresponding clock errors for a specific date, the day before and the day after for interpolation purposes

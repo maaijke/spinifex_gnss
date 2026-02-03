@@ -156,7 +156,7 @@ def get_gnss_data(gnss_file: list[Path], dcb: dict[Any], station: str):
     try:
         rinex_data = get_rinex_data(
             gnss_file[0]
-        )  # we need toget data for two consecutive days
+        )  # we need to get data for two consecutive days
         rinex_data_next_day = get_rinex_data(gnss_file[1])
     except:
         print(f"rinex data failed for station {station}")
@@ -167,7 +167,7 @@ def get_gnss_data(gnss_file: list[Path], dcb: dict[Any], station: str):
         try:
             c1c2_labels = GNSS_OBS_PRIORITY[constellation]
             rxlabels = rinex_data.header.datatypes[constellation]
-            labels = [i for i in sorted(rxlabels) if i[1] == "1" or i[1] == "2"]
+            labels = [i for i in sorted(rxlabels) if i[1] == "1" or i[1] == "2" or i[1] == "5"]
             dcb_labels = [
                 i.split("_")[1:]
                 for i in dcb.station_code_combination
@@ -179,7 +179,7 @@ def get_gnss_data(gnss_file: list[Path], dcb: dict[Any], station: str):
                 if i in labels
                 and j in labels
                 and i[1] == "1"
-                and j[1] == "2"
+                and (j[1] == "2" or j[1] == "5")
                 and f"L1{i[2]}" in labels
                 and f"L2{j[2]}" in labels
             ]
@@ -195,8 +195,8 @@ def get_gnss_data(gnss_file: list[Path], dcb: dict[Any], station: str):
                     for j in c1c2_labels["C2"]
                     if i in labels
                     and j in labels
-                    and f"L1{i[-1]}" in labels
-                    and f"L2{j[-1]}" in labels
+                    and f"L{i[-2:]}" in labels
+                    and f"L{j[-2:]}" in labels # or 5
                 ]
 
                 if not c_tracking:
@@ -205,8 +205,8 @@ def get_gnss_data(gnss_file: list[Path], dcb: dict[Any], station: str):
             c_tracking = c_tracking[0]
             c1_str = c_tracking[0]
             c2_str = c_tracking[1]
-            l1_str = f"L1{c_tracking[0][-1]}"
-            l2_str = f"L2{c_tracking[1][-1]}"
+            l1_str = f"L{c_tracking[0][-2:]}"
+            l2_str = f"L{c_tracking[1][-2:]}"
             idx_c1 = rxlabels.index(c1_str)
             idx_c2 = rxlabels.index(c2_str)
             idx_l1 = rxlabels.index(l1_str)
