@@ -16,7 +16,7 @@ def get_gps_week(date: datetime):
 async def _download_satpos_files_coro(
     date: datetime,
     url: str = "ftp.gfz-potsdam.de/GNSS/products/mgex/",
-    datapath: Path = Path("/home/mevius/IONO/GPS/data/"),
+    datapath: Path = Path("../../GPS/data/"),
 ) -> list[Path]:
 
     sp3_names = []
@@ -48,7 +48,7 @@ async def _download_satpos_files_coro(
 def download_satpos_files(
     date: datetime,
     url: str = "ftp.gfz-potsdam.de/GNSS/products/mgex/",
-    datapath: Path = Path("/home/mevius/IONO/GPS/data/"),
+    datapath: Path = Path("../../GPS/data/"),
 ) -> list[Path]:
     """Get the sp3 position files and corresponding clock errors for a specific date, the day before and the day after for interpolation purposes
 
@@ -59,7 +59,7 @@ def download_satpos_files(
     url : str, optional
         server from where to download the data, by default "https://cddis.nasa.gov/archive/gnss/products/"
     datapath : Path, optional
-        output directory, by default Path("/home/mevius/IONO/GPS/data/")
+        output directory, by default Path("../../GPS/data/")
 
     Returns
     -------
@@ -70,7 +70,7 @@ def download_satpos_files(
 
 
 async def download_dcb_coro(
-    date: datetime, datapath: Path = Path("/home/mevius/IONO/GPS/data/")
+    date: datetime, datapath: Path = Path("../../GPS/data/")
 ) -> Path:
     """Download differential code biases for a given date
 
@@ -79,7 +79,7 @@ async def download_dcb_coro(
     date : datetime
         requested date
     datapath : Path, optional
-        output directory, by default Path("/home/mevius/IONO/GPS/data/")
+        output directory, by default Path("../../GPS/data/")
 
     Returns
     -------
@@ -121,7 +121,7 @@ def check_url(url_list: list[str]):
 async def download_rinex_coro(
     date: datetime,
     stations: list[str],
-    datapath: Path = Path("/home/mevius/IONO/GPS/data/"),
+    datapath: Path = Path("../../GPS/data/"),
 ):
     # TODO: get naming format for dates and servers (like we do for ionex data)
     urls = []
