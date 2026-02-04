@@ -1,4 +1,4 @@
-from proces_gnss_data import (
+from spinifex_gnss.proces_gnss_data import (
     get_gnss_station_density,
     _get_dcb_value,
     _get_phase_corrected,
@@ -13,8 +13,8 @@ from proces_gnss_data import (
     get_ipp_density,
 )
 
-from parse_gnss import parse_dcb_sinex, get_gnss_data
-from gnss_geometry import get_sat_pos_object, get_sat_pos, get_stat_sat_ipp
+from spinifex_gnss.parse_gnss import parse_dcb_sinex, get_gnss_data
+from spinifex_gnss.gnss_geometry import get_sat_pos_object, get_sat_pos, get_stat_sat_ipp
 from pathlib import Path
 import glob
 import astropy.units as u
