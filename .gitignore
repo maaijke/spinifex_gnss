@@ -3,3 +3,4 @@ test_data
 animation
 old_code
 __pycache__
+_version.py
