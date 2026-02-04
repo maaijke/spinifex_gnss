@@ -73,7 +73,7 @@ def get_sat_pos_object(sp3_files: list[Path]) -> xarray:
             sp3_unzipped.append(sp3)
     print("unpacked sp3", sp3_unzipped, sp3_files)
     sp3s = [gr.load(i) for i in sp3_unzipped[:3]]
-    obs = xarray.concat(sp3s, dim="t0")
+    obs = xarray.concat(sp3s, dim="time")
     for sp3 in sp3_unzipped:
         print("gzipping back", sp3, str(sp3))
         subprocess.run(["gzip", "-f", str(sp3)])
