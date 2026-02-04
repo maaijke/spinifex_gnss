@@ -463,9 +463,11 @@ def get_interpolated_tec(
                 + (((INTERPOLATION_ORDER) ** 2 + INTERPOLATION_ORDER) // 2,),
                 dtype=float,
             )
+            print ("A",A.shape)
             weight = (
                 1.0 / vtec_dlong_dlat[dist_select][:, 1]
             )  # inverse variance weights
+            print ("weight",weight.shape)
             idx=0
             for ilon in range(0,INTERPOLATION_ORDER):
                 for ilat in range(0,INTERPOLATION_ORDER-ilon):
@@ -489,6 +491,7 @@ def get_interpolated_tec(
             except:
                 print("inverse fail", AwT.shape, w)
                 continue
+            print ("par", par[0])
             fitted_density[timeidx, hidx] = par[0]  # We need the offset at the origin
     return fitted_density
 
