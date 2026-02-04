@@ -18,7 +18,7 @@ from concurrent.futures import as_completed, ProcessPoolExecutor
 from importlib import resources
 
 
-DISTANCE_KM_CUT = 300
+DISTANCE_KM_CUT = 500
 NDIST_POINTS = 30
 ELEVATION_CUT = 20
 INTERPOLATION_ORDER = 2
