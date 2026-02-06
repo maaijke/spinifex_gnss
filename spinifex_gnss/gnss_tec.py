@@ -55,7 +55,7 @@ def _select_times_from_ipp(ipp: IPP, indices: np.ndarray) -> IPP:
     )
 
 
-def get_electron_density_gnss(ipp: IPP):
+def get_electron_density_gnss(ipp: IPP, select_constellations=None):
     unique_days = get_unique_days(ipp.times)
     unique_days_indices = get_indexlist_unique_days(unique_days, ipp.times)
     all_data = []
@@ -71,7 +71,7 @@ def get_electron_density_gnss(ipp: IPP):
             gnss_file_list = sorted([i for i in gnss_file_list if i.name[:9] in st_list2])
         gnss_file_list = [(i,j) for (i,j) in zip(gnss_file_list,gnss_file_list_next_day)]# pairs of files
         gnss_data_list = process_all_rinex_parallel(
-            gnss_file_list, dcb=dcb
+            gnss_file_list, dcb=dcb, select_constellations=select_constellations
         )
         gnss_data_list = [i for i in gnss_data_list if i.is_valid]
         sp3_files = download_satpos_files(date=day.to_datetime())

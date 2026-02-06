@@ -152,7 +152,7 @@ def _read_dcb_data(file_buffer):
     return DCBdata(dcb=dcb, station_code_combination=station_code_combination)
 
 
-def get_gnss_data(gnss_file: list[Path], dcb: dict[Any], station: str):
+def get_gnss_data(gnss_file: list[Path], dcb: dict[Any], station: str, select_constellations=None):
     try:
         rinex_data = get_rinex_data(
             gnss_file[0]
@@ -162,6 +162,8 @@ def get_gnss_data(gnss_file: list[Path], dcb: dict[Any], station: str):
         print(f"rinex data failed for station {station}")
         return []
     constellations = rinex_data.header.datatypes.keys()
+    if not select_constellations is None:
+        constellations = [i for i in constellations if i in select_constellations]
     gnss_data_list = []
     for constellation in constellations:
         try:
@@ -251,13 +253,13 @@ def get_gnss_data(gnss_file: list[Path], dcb: dict[Any], station: str):
     return gnss_data_list
 
 
-def process_all_rinex_parallel(rinex_files, dcb: dict[Any], max_workers=20):
+def process_all_rinex_parallel(rinex_files, dcb: dict[Any], max_workers=20, select_constellations=None):
     """Run get_gnss_data in parallel and gather results."""
 
     results = []
     with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
         futures = {
-            executor.submit(get_gnss_data, rf, dcb, rf[0].stem[:9]): rf
+            executor.submit(get_gnss_data, rf, dcb, rf[0].stem[:9], select_constellations): rf
             for rf in rinex_files
         }
         for fut in concurrent.futures.as_completed(futures):

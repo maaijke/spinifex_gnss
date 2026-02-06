@@ -20,7 +20,7 @@ from importlib import resources
 
 DISTANCE_KM_CUT = 500
 NDIST_POINTS = 30
-ELEVATION_CUT = 20
+ELEVATION_CUT = 35
 INTERPOLATION_ORDER = 2
 
 gnss_station_file = "data_gnss_pos.txt"
